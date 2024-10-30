@@ -29,7 +29,7 @@ function SocialLinks() {
     <StyledSocialLinks>
       <li>
         <a
-          href="https://github.com/CodePapa360/The-Wild-Oasis"
+          href="https://github.com/CodeWithAlamin/The-Wild-Oasis"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -46,7 +46,7 @@ function SocialLinks() {
 
       <li>
         <a
-          href="https://twitter.com/CodePapa360"
+          href="https://twitter.com/CodeWithAlamin"
           target="_blank"
           rel="noopener noreferrer"
         >
@@ -63,7 +63,7 @@ function SocialLinks() {
 
       <li>
         <a
-          href="https://www.linkedin.com/in/codepapa360"
+          href="https://www.linkedin.com/in/CodeWithAlamin"
           target="_blank"
           rel="noopener noreferrer"
         >
