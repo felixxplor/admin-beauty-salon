@@ -40,7 +40,7 @@ Welcome to <b>The Wild Oasis</b>! This is a hotel management web app, where hote
 <!-- Screenshot -->
 <a align="center" href="https://the-wild-oasis-alamin.vercel.app">
 
-![Screenshot](./public/thumbnail-preview.png)
+![Screenshot](./public/thumbnail-preview.jpg)
 
 </a>
 
