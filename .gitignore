@@ -25,4 +25,3 @@ dist-ssr
 
 # Environment and config files
 .env
-src/services/supabase.js
