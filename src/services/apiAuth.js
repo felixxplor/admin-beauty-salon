@@ -1,4 +1,4 @@
-import supabase, { supabaseUrl } from "./supabase";
+import supabase from './supabase'
 
 export async function signup({ fullName, email, password }) {
   const { data, error } = await supabase.auth.signUp({
@@ -7,45 +7,45 @@ export async function signup({ fullName, email, password }) {
     options: {
       data: {
         fullName,
-        avatar: "",
+        avatar: '',
       },
     },
-  });
+  })
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(error.message)
 
-  return data;
+  return data
 }
 
 export async function login({ email, password }) {
   let { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,
-  });
+  })
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(error.message)
 
-  return data;
+  return data
 }
 
 export async function getCurrentUser() {
-  const { data: session } = await supabase.auth.getSession();
-  if (!session.session) return null;
+  const { data: session } = await supabase.auth.getSession()
+  if (!session.session) return null
 
-  const { data, error } = await supabase.auth.getUser();
+  const { data, error } = await supabase.auth.getUser()
 
-  if (error) throw new Error(error.message);
-  return data?.user;
+  if (error) throw new Error(error.message)
+  return data?.user
 }
 
 export async function logout() {
-  const { error } = await supabase.auth.signOut();
-  if (error) throw new Error(error.message);
+  const { error } = await supabase.auth.signOut()
+  if (error) throw new Error(error.message)
 }
 
 export async function updateCurrentUser({ password, fullName, avatar }) {
   // Turned off updating feature for publicly. You should remove this error and uncomment the rest of the codes to try with your own supabase account.
-  throw new Error("Profile updates are not allowed temporarily");
+  throw new Error('Profile updates are not allowed temporarily')
 
   //////////////////////////////
   // //1. Update password OR fullname

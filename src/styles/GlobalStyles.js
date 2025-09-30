@@ -1,6 +1,7 @@
-import { createGlobalStyle } from "styled-components";
+import { createGlobalStyle } from 'styled-components'
 
 const GlobalStyles = createGlobalStyle`
+
 :root {
     &, &.light-mode{
     /* Grey */
@@ -12,7 +13,6 @@ const GlobalStyles = createGlobalStyle`
     --color-grey-400: #9ca3af;
     --color-grey-500: #6b7280;
     --color-grey-600: #4b5563;
-    --color-grey-700: #374151;
     --color-grey-800: #1f2937;
     --color-grey-900: #111827;
   
@@ -52,7 +52,6 @@ const GlobalStyles = createGlobalStyle`
     --color-grey-400: #6b7280;
     --color-grey-500: #9ca3af;
     --color-grey-600: #d1d5db;
-    --color-grey-700: #e5e7eb;
     --color-grey-800: #f3f4f6;
     --color-grey-900: #f9fafb;
     
@@ -113,9 +112,7 @@ const GlobalStyles = createGlobalStyle`
   }
   
   body {
-    font-family: "Poppins", sans-serif;
-    color: var(--color-grey-700);
-  
+    font-family: "Poppins", sans-serif;  
     transition: color 0.3s, background-color 0.3s;
     min-height: 100vh;
     line-height: 1.5;
@@ -195,7 +192,6 @@ const GlobalStyles = createGlobalStyle`
   --color-grey-400: #6b7280;
   --color-grey-500: #9ca3af;
   --color-grey-600: #d1d5db;
-  --color-grey-700: #e5e7eb;
   --color-grey-800: #f3f4f6;
   --color-grey-900: #f9fafb;
   
@@ -223,6 +219,6 @@ const GlobalStyles = createGlobalStyle`
   --image-grayscale: 10%;
   --image-opacity: 90%;
   */
-`;
+`
 
-export default GlobalStyles;
+export default GlobalStyles

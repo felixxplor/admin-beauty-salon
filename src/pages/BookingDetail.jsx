@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 
-import Spinner from '../../ui/Spinner'
-import { deleteBooking, getBooking, updateBooking } from '../../services/apiBookings'
+import Spinner from '../ui/Spinner'
+import { deleteBooking, getBooking, updateBooking } from '../services/apiBookings'
 
 // Custom hook to fetch booking details
 const useBookingDetail = (bookingId) => {
@@ -47,7 +47,6 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
 
   useEffect(() => {
     if (booking) {
-      // Parse the datetime strings to extract date and time components
       const startTime = booking.startTime ? new Date(booking.startTime) : null
       const endTime = booking.endTime ? new Date(booking.endTime) : null
 
@@ -55,7 +54,7 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
         numClients: booking.numClients || 1,
         status: booking.status || 'confirmed',
         notes: booking.notes || '',
-        startTime: startTime ? startTime.toISOString().slice(0, 16) : '', // Format for datetime-local input
+        startTime: startTime ? startTime.toISOString().slice(0, 16) : '',
         endTime: endTime ? endTime.toISOString().slice(0, 16) : '',
         totalPrice: booking.totalPrice || 0,
       })
@@ -148,6 +147,8 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
                 onChange={(e) => handleInputChange('startTime', e.target.value)}
                 style={{
                   ...modalStyles.input,
+                  color: '#000000',
+                  WebkitTextFillColor: '#000000',
                   ...(formErrors.startTime ? modalStyles.inputError : {}),
                 }}
               />
@@ -164,6 +165,8 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
                 onChange={(e) => handleInputChange('endTime', e.target.value)}
                 style={{
                   ...modalStyles.input,
+                  color: '#000000',
+                  WebkitTextFillColor: '#000000',
                   ...(formErrors.endTime ? modalStyles.inputError : {}),
                 }}
               />
@@ -179,7 +182,11 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
                 min="1"
                 value={formData.numClients}
                 onChange={(e) => handleInputChange('numClients', e.target.value)}
-                style={modalStyles.input}
+                style={{
+                  ...modalStyles.input,
+                  color: '#000000',
+                  WebkitTextFillColor: '#000000',
+                }}
               />
             </div>
 
@@ -191,7 +198,11 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
                 min="0"
                 value={formData.totalPrice}
                 onChange={(e) => handleInputChange('totalPrice', e.target.value)}
-                style={modalStyles.input}
+                style={{
+                  ...modalStyles.input,
+                  color: '#000000',
+                  WebkitTextFillColor: '#000000',
+                }}
               />
             </div>
           </div>
@@ -201,7 +212,11 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
             <select
               value={formData.status}
               onChange={(e) => handleInputChange('status', e.target.value)}
-              style={modalStyles.input}
+              style={{
+                ...modalStyles.select,
+                color: '#000000',
+                WebkitTextFillColor: '#000000',
+              }}
             >
               <option value="pending">Pending</option>
               <option value="confirmed">Confirmed</option>
@@ -215,7 +230,11 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
             <textarea
               value={formData.notes}
               onChange={(e) => handleInputChange('notes', e.target.value)}
-              style={modalStyles.textarea}
+              style={{
+                ...modalStyles.textarea,
+                color: '#000000',
+                WebkitTextFillColor: '#000000',
+              }}
               rows={3}
               placeholder="Add any notes about this booking..."
             />
@@ -333,7 +352,7 @@ const BookingDetailPage = () => {
     setIsDeleting(true)
     try {
       await deleteBooking(parseInt(bookingId))
-      navigate('/calendar') // or wherever you want to redirect after deletion
+      navigate('/bookings') // or wherever you want to redirect after deletion
     } catch (error) {
       console.error('Error deleting booking:', error)
       alert('Failed to delete booking. Please try again.')
@@ -341,28 +360,6 @@ const BookingDetailPage = () => {
       setIsDeleting(false)
       setIsDeleteModalOpen(false)
     }
-  }
-
-  // Helper function to get service display
-  const getServiceDisplay = () => {
-    if (!booking) return 'Service not specified'
-
-    // Handle multiple services from serviceIds
-    if (booking.serviceIds && Array.isArray(booking.serviceIds) && booking.serviceIds.length > 0) {
-      // If we have service names from the query
-      if (Array.isArray(booking.services)) {
-        return booking.services.map((s) => s.name).join(', ')
-      }
-      // Fallback to showing count
-      return `${booking.serviceIds.length} Service${booking.serviceIds.length > 1 ? 's' : ''}`
-    }
-
-    // Handle single service
-    if (booking.services?.name) {
-      return booking.services.name
-    }
-
-    return 'Service not specified'
   }
 
   if (isLoading) return <Spinner />
@@ -417,7 +414,7 @@ const BookingDetailPage = () => {
               <div style={styles.overviewLabel}>Client</div>
               <div style={styles.overviewValue}>
                 <span style={styles.clientIcon}>👤</span>
-                {booking.client?.fullName || booking.client?.name || 'Unknown Client'}
+                {booking.clients?.fullName || booking.clients?.name || 'Unknown Client'}
               </div>
             </div>
 
@@ -425,7 +422,7 @@ const BookingDetailPage = () => {
               <div style={styles.overviewLabel}>Service</div>
               <div style={styles.overviewValue}>
                 <span style={styles.serviceIcon}>💼</span>
-                {getServiceDisplay()}
+                {booking.services?.name || 'Service not specified'}
               </div>
             </div>
 
@@ -487,36 +484,36 @@ const BookingDetailPage = () => {
         </div>
 
         {/* Client Information Card */}
-        {booking.client && (
+        {booking.clients && (
           <div style={styles.card}>
             <h2 style={styles.cardTitle}>Client Information</h2>
             <div style={styles.clientInfoGrid}>
-              {booking.client.email && (
+              {booking.clients.email && (
                 <div style={styles.contactItem}>
                   <div style={styles.contactLabel}>Email</div>
                   <div style={styles.contactValue}>
-                    <a href={`mailto:${booking.client.email}`} style={styles.emailLink}>
-                      {booking.client.email}
+                    <a href={`mailto:${booking.clients.email}`} style={styles.emailLink}>
+                      {booking.clients.email}
                     </a>
                   </div>
                 </div>
               )}
 
-              {booking.client.phone && (
+              {booking.clients.phone && (
                 <div style={styles.contactItem}>
                   <div style={styles.contactLabel}>Phone</div>
                   <div style={styles.contactValue}>
-                    <a href={`tel:${booking.client.phone}`} style={styles.phoneLink}>
-                      {booking.client.phone}
+                    <a href={`tel:${booking.clients.phone}`} style={styles.phoneLink}>
+                      {booking.clients.phone}
                     </a>
                   </div>
                 </div>
               )}
 
-              {booking.client.fullName && (
+              {booking.clients.fullName && (
                 <div style={styles.contactItem}>
                   <div style={styles.contactLabel}>Full Name</div>
-                  <div style={styles.contactValue}>{booking.client.fullName}</div>
+                  <div style={styles.contactValue}>{booking.clients.fullName}</div>
                 </div>
               )}
             </div>
@@ -530,7 +527,7 @@ const BookingDetailPage = () => {
             <div style={styles.serviceInfoGrid}>
               <div style={styles.serviceItem}>
                 <div style={styles.serviceLabel}>Service Name</div>
-                <div style={styles.serviceValue}>{getServiceDisplay()}</div>
+                <div style={styles.serviceValue}>{booking.services.name}</div>
               </div>
 
               {booking.services.duration && (
@@ -553,19 +550,6 @@ const BookingDetailPage = () => {
                   <div style={styles.serviceValue}>{booking.services.description}</div>
                 </div>
               )}
-            </div>
-          </div>
-        )}
-
-        {/* Staff Information Card */}
-        {booking.staff && (
-          <div style={styles.card}>
-            <h2 style={styles.cardTitle}>Staff Information</h2>
-            <div style={styles.serviceInfoGrid}>
-              <div style={styles.serviceItem}>
-                <div style={styles.serviceLabel}>Staff Member</div>
-                <div style={styles.serviceValue}>{booking.staff.name}</div>
-              </div>
             </div>
           </div>
         )}
@@ -951,6 +935,15 @@ const modalStyles = {
     fontSize: '14px',
     outline: 'none',
     transition: 'border-color 0.2s',
+  },
+  select: {
+    padding: '12px 16px',
+    borderRadius: '8px',
+    border: '1px solid #d1d5db',
+    fontSize: '14px',
+    outline: 'none',
+    backgroundColor: 'white',
+    cursor: 'pointer',
   },
   textarea: {
     padding: '12px 16px',

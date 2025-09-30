@@ -1,8 +1,8 @@
-import { useQuery } from "@tanstack/react-query";
-import styled from "styled-components";
-import { getCabins } from "../../services/apiCabins";
-import Spinner from "../../ui/Spinner";
-import CabinRow from "./CabinRow";
+import { useQuery } from '@tanstack/react-query'
+import styled from 'styled-components'
+import Spinner from '../../ui/Spinner'
+import { getServices } from '../../services/apiServices'
+import ServiceRow from './ServiceRow'
 
 const Table = styled.div`
   border: 1px solid var(--color-grey-200);
@@ -11,7 +11,7 @@ const Table = styled.div`
   background-color: var(--color-grey-0);
   border-radius: 7px;
   overflow: hidden;
-`;
+`
 
 const TableHeader = styled.header`
   display: grid;
@@ -26,35 +26,35 @@ const TableHeader = styled.header`
   font-weight: 600;
   color: var(--color-grey-600);
   padding: 1.6rem 2.4rem;
-`;
+`
 
-function CabinTable() {
+function ServiceTable() {
   const {
     isLoading,
-    data: cabins,
+    data: services,
     error,
   } = useQuery({
-    queryKey: ["cabins"],
-    queryFn: getCabins,
-  });
+    queryKey: ['services'],
+    queryFn: getServices,
+  })
 
-  if (isLoading) return <Spinner />;
+  if (isLoading) return <Spinner />
 
   return (
     <Table role="table">
       <TableHeader role="row">
         <div></div>
-        <div>Cabin</div>
+        <div>Service</div>
         <div>Capacity</div>
         <div>Price</div>
         <div>Discount</div>
         <div></div>
       </TableHeader>
-      {cabins.map((cabin) => (
-        <CabinRow cabin={cabin} key={cabin.id} />
+      {services.map((service) => (
+        <ServiceRow service={service} key={service.id} />
       ))}
     </Table>
-  );
+  )
 }
 
-export default CabinTable;
+export default ServiceTable

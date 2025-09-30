@@ -1,6 +1,6 @@
 // Search for: 'jo', 'fa', 'mar', 'emm', 'ah'
 
-export const guests = [
+export const clients = [
   {
     // id: 1000,
     fullName: 'Jonas Schmedtmann',
@@ -214,4 +214,4 @@ export const guests = [
     nationalID: '3456117890',
     countryFlag: 'https://flagcdn.com/tw.svg',
   },
-];
+]

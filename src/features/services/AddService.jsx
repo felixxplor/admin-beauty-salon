@@ -1,20 +1,20 @@
-import Button from "../../ui/Button";
-import CreateCabinForm from "./CreateCabinForm";
-import Modal from "../../ui/Modal";
+import Button from '../../ui/Button'
+import Modal from '../../ui/Modal'
+import CreateServiceForm from './CreateServiceForm'
 
-function AddCabin() {
+function AddService() {
   return (
     <div>
       <Modal>
-        <Modal.Open opens="cabin-form">
-          <Button>Add new cabin</Button>
+        <Modal.Open opens="service-form">
+          <Button>Add new service</Button>
         </Modal.Open>
-        <Modal.Window name="cabin-form">
-          <CreateCabinForm />
+        <Modal.Window name="service-form">
+          <CreateServiceForm />
         </Modal.Window>
       </Modal>
     </div>
-  );
+  )
 }
 
 // function AddCabin() {
@@ -34,4 +34,4 @@ function AddCabin() {
 //   );
 // }
 
-export default AddCabin;
+export default AddService
