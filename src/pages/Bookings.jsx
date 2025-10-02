@@ -7,7 +7,9 @@ import Empty from '../ui/Empty'
 import { calendarStyles } from '../styles/CalendarStyles'
 import { createBooking } from '../services/apiBookings'
 import { getClient } from '../services/apiClients'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import supabase from '../services/supabase'
+import { useEffect } from 'react'
 
 // Custom hook to use the getStaff function
 const useStaff = () => {
@@ -90,6 +92,38 @@ const useClients = () => {
   return { clients, isLoading, error }
 }
 
+// Custom hook to fetch staff shifts
+const useStaffShifts = () => {
+  const [staffShifts, setStaffShifts] = React.useState([])
+  const [isLoading, setIsLoading] = React.useState(true)
+  const [error, setError] = React.useState(null)
+
+  React.useEffect(() => {
+    const fetchStaffShifts = async () => {
+      try {
+        setIsLoading(true)
+        const { data, error } = await supabase
+          .from('staff_shifts')
+          .select('*')
+          .order('dayOfWeek', { ascending: true })
+
+        if (error) throw error
+        setStaffShifts(data || [])
+      } catch (err) {
+        console.error('Error loading staff shifts:', err)
+        setError(err)
+        setStaffShifts([])
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchStaffShifts()
+  }, [])
+
+  return { staffShifts, isLoading, error }
+}
+
 const timeSlots = [
   '09:00',
   '09:15',
@@ -134,6 +168,24 @@ const timeSlots = [
   '19:00',
 ]
 
+// Helper function to get staff working on a specific day
+const getStaffWorkingOnDay = (date, staff, staffShifts) => {
+  if (!date || !staff || !staffShifts || staffShifts.length === 0) return staff
+
+  const dayOfWeek = new Date(date).getDay() // 0 = Sunday, 1 = Monday, etc.
+
+  // Get staff IDs that have shifts on this day
+  const workingStaffIds = staffShifts
+    .filter((shift) => shift.dayOfWeek === dayOfWeek)
+    .map((shift) => shift.staffId)
+
+  // Return only staff members who are working on this day
+  const workingStaff = staff.filter((s) => workingStaffIds.includes(s.id))
+
+  // If no staff found (maybe shifts not set up yet), return all staff
+  return workingStaff.length > 0 ? workingStaff : staff
+}
+
 // Helper function to create a local date-time without timezone conversion
 const createLocalDateTime = (dateString, timeString) => {
   // Parse the date string (YYYY-MM-DD)
@@ -163,28 +215,58 @@ const formatDateForDatabase = (date) => {
 
 const BookingCalendar = () => {
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState(null)
   const [view, setView] = useState('calendar') // 'calendar' or 'day'
   const [hoveredDay, setHoveredDay] = useState(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
+  const [serviceSearchTerm, setServiceSearchTerm] = useState('')
   const [createFormData, setCreateFormData] = useState({
-    clientId: '', // Changed from clientName/clientEmail to clientId
-    name: '', // Add name field
-    phone: '', // Add phone field
+    clientId: '',
+    name: '',
+    phone: '',
     selectedServiceIds: [],
     startTime: '',
-    staffId: '', // Made optional
+    staffId: '',
     numClients: 1,
     notes: '',
     status: 'pending',
   })
 
+  useEffect(() => {
+    const dateParam = searchParams.get('date')
+    const viewParam = searchParams.get('view')
+
+    if (dateParam && viewParam === 'day') {
+      setSelectedDate(dateParam)
+      setView('day')
+      // Clean up URL params after applying them
+      setSearchParams({})
+    }
+  }, [searchParams, setSearchParams])
+
   const { bookings, isLoading } = useBookings()
   const { staff, isLoading: staffLoading, error: staffError } = useStaff()
   const { services, isLoading: servicesLoading, error: servicesError } = useServices()
   const { clients, isLoading: clientsLoading, error: clientsError } = useClients()
+  const { staffShifts, isLoading: staffShiftsLoading, error: staffShiftsError } = useStaffShifts()
+
+  // Filter services based on search term
+  const filteredServices = useMemo(() => {
+    if (!services) return []
+
+    if (!serviceSearchTerm.trim()) return services
+
+    const searchLower = serviceSearchTerm.toLowerCase()
+    return services.filter(
+      (service) =>
+        service.name.toLowerCase().includes(searchLower) ||
+        service.category?.toLowerCase().includes(searchLower) ||
+        service.description?.toLowerCase().includes(searchLower)
+    )
+  }, [services, serviceSearchTerm])
 
   // Calculate total duration and price based on selected services
   const selectedServicesInfo = useMemo(() => {
@@ -315,9 +397,8 @@ const BookingCalendar = () => {
         id: booking.id,
         originalBooking: booking, // Keep reference to original booking data
         service: serviceDisplay,
-        client:
-          booking.client?.fullName || booking.client?.email || booking.client || 'Unknown Client',
-        date: startTime.toISOString().split('T')[0],
+        client: booking.client?.fullName || booking.client?.email || booking.name || booking.phone,
+        date: booking.date || startTime.toISOString().split('T')[0],
         time: formatTime(localStartHours, localStartMinutes), // Use local time
         endTime: formatTime(localEndHours, localEndMinutes), // Use local time
         staff: staffMember,
@@ -393,9 +474,14 @@ const BookingCalendar = () => {
     }))
   }
 
-  // Function to handle booking click and navigate to detail page
   const handleBookingClick = (booking) => {
-    navigate(`/bookings/${booking.id}`)
+    navigate(`/bookings/${booking.id}?returnDate=${selectedDate}`)
+  }
+
+  // Function to close modal and reset
+  const closeModal = () => {
+    setShowCreateModal(false)
+    setServiceSearchTerm('')
   }
 
   // FIXED: getBookingForSlot function with proper staffId handling
@@ -442,66 +528,50 @@ const BookingCalendar = () => {
         return
       }
 
-      // Check if either client is selected OR name is provided
-      if (!createFormData.clientId && !createFormData.name.trim()) {
-        alert('Please either select a client or enter a name')
+      if (!createFormData.clientId && !createFormData.phone.trim()) {
+        alert('Please either select a client or enter a phone number')
         setIsCreating(false)
         return
       }
 
-      // Create the booking object with proper timezone handling
       const startDateTime = createLocalDateTime(selectedDate, createFormData.startTime)
       const endDateTime = new Date(
         startDateTime.getTime() + selectedServicesInfo.totalDuration * 60000
       )
 
-      // Format dates properly for database
       const formattedStartTime = formatDateForDatabase(startDateTime)
       const formattedEndTime = formatDateForDatabase(endDateTime)
 
       const bookingData = {
-        date: startDateTime, // Keep as Date object for the date field
-        startTime: formattedStartTime, // Use formatted string that preserves local time
-        endTime: formattedEndTime, // Use formatted string that preserves local time
+        date: selectedDate, // FIX 1: Use string directly, not Date object
+        startTime: formattedStartTime,
+        endTime: formattedEndTime,
         numClients: parseInt(createFormData.numClients),
         price: selectedServicesInfo.totalPrice,
         totalPrice: selectedServicesInfo.totalPrice,
         status: createFormData.status,
         notes: createFormData.notes,
-        serviceIds: createFormData.selectedServiceIds.map((id) => parseInt(id)), // Store as array in JSONB field
-        // If there's only one service, also store in the single serviceId field for backward compatibility
+        serviceIds: createFormData.selectedServiceIds.map((id) => parseInt(id)),
         serviceId:
           createFormData.selectedServiceIds.length === 1
             ? parseInt(createFormData.selectedServiceIds[0])
             : null,
         isPaid: false,
         extrasPrice: 0,
+        staffId: createFormData.staffId ? parseInt(createFormData.staffId) : null,
       }
 
-      // Add staff if selected (optional)
-      if (createFormData.staffId) {
-        bookingData.staffId = parseInt(createFormData.staffId)
-      } else {
-        // Default to staffId: 2 ("Any") when no staff is selected
-        bookingData.staffId = 2
-      }
-
-      // Add client information
       if (createFormData.clientId) {
         bookingData.clientId = parseInt(createFormData.clientId)
       } else {
-        // If no client selected, use name and phone for new client creation
-        // For now, using a placeholder clientId - you'll need to implement client creation
-        bookingData.clientId = 1
-        bookingData.name = createFormData.name
+        // FIX 2: Store name and phone for non-client bookings
+        bookingData.name = createFormData.name || null
         bookingData.phone = createFormData.phone
       }
 
-      // Use admin token for booking creation
       await createBooking(bookingData)
 
-      // Close modal and reset form
-      setShowCreateModal(false)
+      closeModal()
       setCreateFormData({
         clientId: '',
         name: '',
@@ -514,8 +584,7 @@ const BookingCalendar = () => {
         status: 'pending',
       })
 
-      // Optionally refresh bookings data
-      window.location.reload() // Simple refresh, you might want to use a more sophisticated approach
+      window.location.reload()
     } catch (error) {
       console.error('Error creating booking:', error)
       alert('Failed to create booking. Please try again.')
@@ -524,7 +593,8 @@ const BookingCalendar = () => {
     }
   }
 
-  if (isLoading || staffLoading || servicesLoading || clientsLoading) return <Spinner />
+  if (isLoading || staffLoading || servicesLoading || clientsLoading || staffShiftsLoading)
+    return <Spinner />
 
   if (staffError) {
     return (
@@ -550,8 +620,13 @@ const BookingCalendar = () => {
     )
   }
 
-  // REMOVED: This line was preventing the calendar from showing when no bookings exist
-  // if (!bookings || bookings.length === 0) return <Empty resourceName="bookings" />
+  if (staffShiftsError) {
+    return (
+      <div style={{ padding: '24px', textAlign: 'center', color: '#ef4444' }}>
+        Error loading staff shifts: {staffShiftsError.message}
+      </div>
+    )
+  }
 
   // Get calendar days for current month
   const getCalendarDays = () => {
@@ -603,9 +678,12 @@ const BookingCalendar = () => {
   if (view === 'day' && selectedDate) {
     const dayBookings = bookingsByDate[selectedDate] || []
 
-    // Calculate grid template columns dynamically based on number of staff
-    const staffGridColumns = staff.map(() => '120px').join(' ')
-    const staffHeaderGridColumns = `repeat(${staff.length}, 120px)`
+    // Filter staff to only show those working on this day
+    const workingStaff = getStaffWorkingOnDay(selectedDate, staff, staffShifts)
+
+    // Calculate grid template columns dynamically based on number of WORKING staff
+    const staffGridColumns = workingStaff.map(() => '120px').join(' ')
+    const staffHeaderGridColumns = `repeat(${workingStaff.length}, 120px)`
 
     return (
       <div style={calendarStyles.container}>
@@ -655,7 +733,7 @@ const BookingCalendar = () => {
                 gridTemplateColumns: staffHeaderGridColumns,
               }}
             >
-              {staff.map((staffMember) => {
+              {workingStaff.map((staffMember) => {
                 const staffName =
                   typeof staffMember === 'string' ? staffMember : staffMember.name || staffMember.id
                 return (
@@ -685,8 +763,7 @@ const BookingCalendar = () => {
                   gridTemplateColumns: staffGridColumns,
                 }}
               >
-                {staff.map((staffMember) => {
-                  // FIXED: Pass the full staff object, not just the name
+                {workingStaff.map((staffMember) => {
                   const booking = getBookingForSlot(staffMember, timeSlot, selectedDate)
                   return (
                     <div key={`${staffMember.id}-${timeSlot}`} style={calendarStyles.staffSlot}>
@@ -694,11 +771,13 @@ const BookingCalendar = () => {
                         <div
                           style={{
                             ...calendarStyles.bookingBlock,
-                            ...(booking.status === 'confirmed'
-                              ? calendarStyles.bookingConfirmed
+                            ...(booking.status === 'completed'
+                              ? { backgroundColor: '#9ca3af', color: 'white' }
                               : booking.status === 'pending'
-                              ? calendarStyles.bookingPending
-                              : calendarStyles.bookingCancelled),
+                              ? { backgroundColor: '#22c55e', color: 'white' }
+                              : booking.status === 'cancelled'
+                              ? { backgroundColor: '#ef4444', color: 'white' }
+                              : calendarStyles.bookingConfirmed),
                             cursor: 'pointer',
                             transition: 'all 0.2s ease',
                           }}
@@ -782,7 +861,7 @@ const BookingCalendar = () => {
 
         {/* Create Booking Modal */}
         {showCreateModal && (
-          <div style={calendarStyles.modalOverlay} onClick={() => setShowCreateModal(false)}>
+          <div style={calendarStyles.modalOverlay} onClick={closeModal}>
             <div style={calendarStyles.modal} onClick={(e) => e.stopPropagation()}>
               <div style={calendarStyles.modalHeader}>
                 Create New Booking for{' '}
@@ -865,6 +944,7 @@ const BookingCalendar = () => {
                           ? 'Auto-filled from selected client'
                           : 'Enter phone number'
                       }
+                      required
                     />
                   </div>
                 </div>
@@ -884,8 +964,27 @@ const BookingCalendar = () => {
                   💡 Either select an existing client OR enter name and phone for a new client
                 </div>
 
+                {/* Services with Search Box */}
                 <div style={calendarStyles.formGroup}>
                   <label style={calendarStyles.label}>Services (Select Multiple)</label>
+
+                  {/* Search Box */}
+                  <input
+                    type="text"
+                    placeholder="🔍 Search services by name or category..."
+                    value={serviceSearchTerm}
+                    onChange={(e) => setServiceSearchTerm(e.target.value)}
+                    style={{
+                      ...calendarStyles.input,
+                      marginBottom: '8px',
+                      padding: '10px 12px',
+                      fontSize: '14px',
+                      border: '2px solid #d1d5db',
+                      backgroundColor: 'white',
+                    }}
+                  />
+
+                  {/* Service List */}
                   <div
                     style={{
                       border: '1px solid #d1d5db',
@@ -896,54 +995,100 @@ const BookingCalendar = () => {
                       backgroundColor: 'white',
                     }}
                   >
-                    {services.map((service) => (
-                      <label
-                        key={service.id}
+                    {filteredServices.length > 0 ? (
+                      filteredServices.map((service) => (
+                        <label
+                          key={service.id}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            padding: '8px',
+                            cursor: 'pointer',
+                            borderRadius: '4px',
+                            marginBottom: '4px',
+                            backgroundColor: createFormData.selectedServiceIds.includes(
+                              service.id.toString()
+                            )
+                              ? '#e0f2fe'
+                              : 'transparent',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={createFormData.selectedServiceIds.includes(
+                              service.id.toString()
+                            )}
+                            onChange={() => handleServiceSelection(service.id.toString())}
+                            style={{ marginRight: '8px' }}
+                          />
+                          <div style={{ flex: 1 }}>
+                            <div style={{ fontWeight: '500', fontSize: '14px', color: '#000' }}>
+                              {service.name}
+                            </div>
+                            <div style={{ fontSize: '12px', color: '#666' }}>
+                              {service.category && (
+                                <span
+                                  style={{
+                                    backgroundColor: '#e5e7eb',
+                                    padding: '2px 6px',
+                                    borderRadius: '3px',
+                                    marginRight: '6px',
+                                    fontSize: '11px',
+                                  }}
+                                >
+                                  {service.category}
+                                </span>
+                              )}
+                              {service.duration} min - $
+                              {(service.regularPrice || 0) - (service.discount || 0)}
+                              {service.discount > 0 && (
+                                <span
+                                  style={{
+                                    textDecoration: 'line-through',
+                                    marginLeft: '4px',
+                                    opacity: 0.7,
+                                  }}
+                                >
+                                  ${service.regularPrice}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </label>
+                      ))
+                    ) : (
+                      <div
                         style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          padding: '8px',
-                          cursor: 'pointer',
-                          borderRadius: '4px',
-                          marginBottom: '4px',
-                          backgroundColor: createFormData.selectedServiceIds.includes(
-                            service.id.toString()
-                          )
-                            ? '#e0f2fe'
-                            : 'transparent',
+                          padding: '16px',
+                          textAlign: 'center',
+                          color: '#666',
+                          fontSize: '14px',
                         }}
                       >
-                        <input
-                          type="checkbox"
-                          checked={createFormData.selectedServiceIds.includes(
-                            service.id.toString()
-                          )}
-                          onChange={() => handleServiceSelection(service.id.toString())}
-                          style={{ marginRight: '8px' }}
-                        />
-                        <div style={{ flex: 1 }}>
-                          <div style={{ fontWeight: '500', fontSize: '14px', color: '#000' }}>
-                            {service.name}
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#666' }}>
-                            {service.duration} min - $
-                            {(service.regularPrice || 0) - (service.discount || 0)}
-                            {service.discount > 0 && (
-                              <span
-                                style={{
-                                  textDecoration: 'line-through',
-                                  marginLeft: '4px',
-                                  opacity: 0.7,
-                                }}
-                              >
-                                ${service.regularPrice}
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </label>
-                    ))}
+                        No services found matching &#39;{serviceSearchTerm}&#39;
+                      </div>
+                    )}
                   </div>
+
+                  {/* Clear search button */}
+                  {serviceSearchTerm && (
+                    <button
+                      type="button"
+                      onClick={() => setServiceSearchTerm('')}
+                      style={{
+                        marginTop: '8px',
+                        padding: '6px 12px',
+                        fontSize: '12px',
+                        color: '#2563eb',
+                        backgroundColor: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        textDecoration: 'underline',
+                      }}
+                    >
+                      Clear search
+                    </button>
+                  )}
 
                   {selectedServicesInfo.totalDuration > 0 && (
                     <div
@@ -1003,20 +1148,21 @@ const BookingCalendar = () => {
                   <select
                     style={calendarStyles.select}
                     value={createFormData.staffId}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      console.log('Staff selected:', e.target.value)
                       setCreateFormData((prev) => ({ ...prev, staffId: e.target.value }))
-                    }
+                    }}
                     required
                   >
                     <option value="">Select staff member</option>
-                    {staff.map((staffMember) => (
+                    {workingStaff.map((staffMember) => (
                       <option key={staffMember.id} value={staffMember.id}>
                         {staffMember.name || staffMember.id}
                       </option>
                     ))}
                   </select>
                   <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                    Leave blank if no specific staff member is required
+                    Only showing staff available on this day
                   </div>
                 </div>
 
@@ -1040,7 +1186,7 @@ const BookingCalendar = () => {
                     <input
                       type="text"
                       style={{ ...calendarStyles.input, backgroundColor: '#f9fafb' }}
-                      value={`${selectedServicesInfo.totalPrice}`}
+                      value={`$${selectedServicesInfo.totalPrice}`}
                       disabled
                     />
                   </div>
@@ -1074,11 +1220,7 @@ const BookingCalendar = () => {
                 </div>
 
                 <div style={calendarStyles.formButtons}>
-                  <button
-                    type="button"
-                    onClick={() => setShowCreateModal(false)}
-                    style={calendarStyles.cancelButton}
-                  >
+                  <button type="button" onClick={closeModal} style={calendarStyles.cancelButton}>
                     Cancel
                   </button>
                   <button

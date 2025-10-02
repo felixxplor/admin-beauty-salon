@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
 
 import Spinner from '../../ui/Spinner'
 import { deleteBooking, getBooking, updateBooking } from '../../services/apiBookings'
+import { modalStyles, styles } from '../../styles/BookingDetailStyles'
 
 // Custom hook to fetch booking details
 const useBookingDetail = (bookingId) => {
@@ -47,16 +48,25 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
 
   useEffect(() => {
     if (booking) {
-      // Parse the datetime strings to extract date and time components
-      const startTime = booking.startTime ? new Date(booking.startTime) : null
-      const endTime = booking.endTime ? new Date(booking.endTime) : null
+      // Helper function to convert UTC date to local datetime-local format
+      const toLocalDateTimeString = (dateString) => {
+        if (!dateString) return ''
+        const date = new Date(dateString)
+        // Get local datetime in the format needed for datetime-local input
+        const year = date.getFullYear()
+        const month = String(date.getMonth() + 1).padStart(2, '0')
+        const day = String(date.getDate()).padStart(2, '0')
+        const hours = String(date.getHours()).padStart(2, '0')
+        const minutes = String(date.getMinutes()).padStart(2, '0')
+        return `${year}-${month}-${day}T${hours}:${minutes}`
+      }
 
       setFormData({
         numClients: booking.numClients || 1,
         status: booking.status || 'confirmed',
         notes: booking.notes || '',
-        startTime: startTime ? startTime.toISOString().slice(0, 16) : '', // Format for datetime-local input
-        endTime: endTime ? endTime.toISOString().slice(0, 16) : '',
+        startTime: toLocalDateTimeString(booking.startTime),
+        endTime: toLocalDateTimeString(booking.endTime),
         totalPrice: booking.totalPrice || 0,
       })
     }
@@ -104,8 +114,10 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
         numClients: parseInt(formData.numClients),
         status: formData.status,
         notes: formData.notes,
-        startTime: new Date(formData.startTime).toISOString(),
-        endTime: new Date(formData.endTime).toISOString(),
+        // Don't use new Date().toISOString() - it converts to UTC
+        // Instead, append 'Z' to treat the local time as UTC, or use the value directly
+        startTime: formData.startTime, // Send as-is, let backend handle it
+        endTime: formData.endTime, // Send as-is, let backend handle it
         totalPrice: parseFloat(formData.totalPrice),
       }
 
@@ -148,6 +160,8 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
                 onChange={(e) => handleInputChange('startTime', e.target.value)}
                 style={{
                   ...modalStyles.input,
+                  color: '#000000',
+                  WebkitTextFillColor: '#000000',
                   ...(formErrors.startTime ? modalStyles.inputError : {}),
                 }}
               />
@@ -164,6 +178,8 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
                 onChange={(e) => handleInputChange('endTime', e.target.value)}
                 style={{
                   ...modalStyles.input,
+                  color: '#000000',
+                  WebkitTextFillColor: '#000000',
                   ...(formErrors.endTime ? modalStyles.inputError : {}),
                 }}
               />
@@ -179,7 +195,11 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
                 min="1"
                 value={formData.numClients}
                 onChange={(e) => handleInputChange('numClients', e.target.value)}
-                style={modalStyles.input}
+                style={{
+                  ...modalStyles.input,
+                  color: '#000000',
+                  WebkitTextFillColor: '#000000',
+                }}
               />
             </div>
 
@@ -191,7 +211,11 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
                 min="0"
                 value={formData.totalPrice}
                 onChange={(e) => handleInputChange('totalPrice', e.target.value)}
-                style={modalStyles.input}
+                style={{
+                  ...modalStyles.input,
+                  color: '#000000',
+                  WebkitTextFillColor: '#000000',
+                }}
               />
             </div>
           </div>
@@ -201,7 +225,11 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
             <select
               value={formData.status}
               onChange={(e) => handleInputChange('status', e.target.value)}
-              style={modalStyles.input}
+              style={{
+                ...modalStyles.select,
+                color: '#000000',
+                WebkitTextFillColor: '#000000',
+              }}
             >
               <option value="pending">Pending</option>
               <option value="confirmed">Confirmed</option>
@@ -215,7 +243,11 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
             <textarea
               value={formData.notes}
               onChange={(e) => handleInputChange('notes', e.target.value)}
-              style={modalStyles.textarea}
+              style={{
+                ...modalStyles.textarea,
+                color: '#000000',
+                WebkitTextFillColor: '#000000',
+              }}
               rows={3}
               placeholder="Add any notes about this booking..."
             />
@@ -252,9 +284,11 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
 const BookingDetailPage = () => {
   const { bookingId } = useParams()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const [isCompleting, setIsCompleting] = useState(false)
 
   const { booking, isLoading, error, refetch } = useBookingDetail(bookingId)
 
@@ -329,11 +363,24 @@ const BookingDetailPage = () => {
     return `${durationMinutes}m`
   }
 
+  const handleComplete = async () => {
+    setIsCompleting(true)
+    try {
+      await updateBooking(parseInt(bookingId), { status: 'completed' })
+      await refetch()
+    } catch (error) {
+      console.error('Error completing booking:', error)
+      alert('Failed to complete booking. Please try again.')
+    } finally {
+      setIsCompleting(false)
+    }
+  }
+
   const handleDelete = async () => {
     setIsDeleting(true)
     try {
       await deleteBooking(parseInt(bookingId))
-      navigate('/calendar') // or wherever you want to redirect after deletion
+      navigate('/bookings')
     } catch (error) {
       console.error('Error deleting booking:', error)
       alert('Failed to delete booking. Please try again.')
@@ -343,7 +390,6 @@ const BookingDetailPage = () => {
     }
   }
 
-  // Helper function to get service display
   const getServiceDisplay = () => {
     if (!booking) return 'Service not specified'
 
@@ -388,7 +434,18 @@ const BookingDetailPage = () => {
       {/* Header */}
       <div style={styles.header}>
         <div style={styles.headerLeft}>
-          <button onClick={() => navigate(-1)} style={styles.backButton}>
+          <button
+            onClick={() => {
+              const returnDate = searchParams.get('returnDate')
+
+              if (returnDate) {
+                navigate(`/bookings?date=${returnDate}&view=day`)
+              } else {
+                navigate('/bookings')
+              }
+            }}
+            style={styles.backButton}
+          >
             ← Back
           </button>
           <div style={styles.titleSection}>
@@ -398,6 +455,29 @@ const BookingDetailPage = () => {
         </div>
 
         <div style={styles.headerActions}>
+          <button
+            onClick={handleComplete}
+            disabled={isCompleting || booking.status === 'completed'}
+            style={{
+              padding: '12px 20px',
+              backgroundColor: booking.status === 'completed' ? '#9ca3af' : '#16a34a',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '14px',
+              fontWeight: '600',
+              cursor: isCompleting || booking.status === 'completed' ? 'not-allowed' : 'pointer',
+              transition: 'all 0.2s ease',
+              opacity: isCompleting || booking.status === 'completed' ? 0.7 : 1,
+            }}
+          >
+            ✓{' '}
+            {isCompleting
+              ? 'Completing...'
+              : booking.status === 'completed'
+              ? 'Completed'
+              : 'Complete'}
+          </button>
           <button onClick={() => setIsEditModalOpen(true)} style={styles.editButton}>
             ✏️ Edit
           </button>
@@ -417,7 +497,7 @@ const BookingDetailPage = () => {
               <div style={styles.overviewLabel}>Client</div>
               <div style={styles.overviewValue}>
                 <span style={styles.clientIcon}>👤</span>
-                {booking.client?.fullName || booking.client?.name || 'Unknown Client'}
+                {booking.client?.fullName || booking.client?.name || booking.phone}
               </div>
             </div>
 
@@ -524,7 +604,7 @@ const BookingDetailPage = () => {
         )}
 
         {/* Service Information Card */}
-        {booking.services && (
+        {booking.service && (
           <div style={styles.card}>
             <h2 style={styles.cardTitle}>Service Information</h2>
             <div style={styles.serviceInfoGrid}>
@@ -533,39 +613,26 @@ const BookingDetailPage = () => {
                 <div style={styles.serviceValue}>{getServiceDisplay()}</div>
               </div>
 
-              {booking.services.duration && (
+              {booking.service.duration && (
                 <div style={styles.serviceItem}>
                   <div style={styles.serviceLabel}>Service Duration</div>
-                  <div style={styles.serviceValue}>{booking.services.duration} minutes</div>
+                  <div style={styles.serviceValue}>{booking.service.duration} minutes</div>
                 </div>
               )}
 
-              {booking.services.regularPrice && (
+              {booking.service.regularPrice && (
                 <div style={styles.serviceItem}>
                   <div style={styles.serviceLabel}>Service Price</div>
-                  <div style={styles.serviceValue}>${booking.services.regularPrice}</div>
+                  <div style={styles.serviceValue}>${booking.service.regularPrice}</div>
                 </div>
               )}
 
-              {booking.services.description && (
+              {booking.service.description && (
                 <div style={styles.serviceItem}>
                   <div style={styles.serviceLabel}>Description</div>
-                  <div style={styles.serviceValue}>{booking.services.description}</div>
+                  <div style={styles.serviceValue}>{booking.service.description}</div>
                 </div>
               )}
-            </div>
-          </div>
-        )}
-
-        {/* Staff Information Card */}
-        {booking.staff && (
-          <div style={styles.card}>
-            <h2 style={styles.cardTitle}>Staff Information</h2>
-            <div style={styles.serviceInfoGrid}>
-              <div style={styles.serviceItem}>
-                <div style={styles.serviceLabel}>Staff Member</div>
-                <div style={styles.serviceValue}>{booking.staff.name}</div>
-              </div>
             </div>
           </div>
         )}
@@ -586,20 +653,6 @@ const BookingDetailPage = () => {
               <div style={styles.metadataLabel}>Created</div>
               <div style={styles.metadataValue}>{formatDateTime(booking.created_at)}</div>
             </div>
-
-            {booking.updated_at && (
-              <div style={styles.metadataItem}>
-                <div style={styles.metadataLabel}>Last Updated</div>
-                <div style={styles.metadataValue}>{formatDateTime(booking.updated_at)}</div>
-              </div>
-            )}
-
-            {booking.isPaid !== null && (
-              <div style={styles.metadataItem}>
-                <div style={styles.metadataLabel}>Payment Status</div>
-                <div style={styles.metadataValue}>{booking.isPaid ? 'Paid' : 'Not Paid'}</div>
-              </div>
-            )}
           </div>
         </div>
       </div>
@@ -644,387 +697,6 @@ const BookingDetailPage = () => {
       )}
     </div>
   )
-}
-
-const styles = {
-  container: {
-    width: '100%',
-    padding: '24px',
-    backgroundColor: '#f9fafb',
-    minHeight: '100vh',
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: '32px',
-    backgroundColor: 'white',
-    padding: '24px',
-    borderRadius: '12px',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-  },
-  headerLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '20px',
-  },
-  backButton: {
-    padding: '8px 16px',
-    backgroundColor: 'transparent',
-    border: '1px solid #d1d5db',
-    borderRadius: '8px',
-    fontSize: '14px',
-    cursor: 'pointer',
-    color: '#6b7280',
-    transition: 'all 0.2s ease',
-  },
-  titleSection: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-  },
-  title: {
-    fontSize: '28px',
-    fontWeight: 'bold',
-    color: '#1a1a1a',
-    margin: 0,
-  },
-  headerActions: {
-    display: 'flex',
-    gap: '12px',
-  },
-  editButton: {
-    padding: '12px 20px',
-    backgroundColor: '#2563eb',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-  },
-  deleteButton: {
-    padding: '12px 20px',
-    backgroundColor: '#dc2626',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-  },
-  content: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '24px',
-  },
-  card: {
-    backgroundColor: 'white',
-    borderRadius: '12px',
-    padding: '24px',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-  },
-  cardTitle: {
-    fontSize: '20px',
-    fontWeight: '600',
-    color: '#1a1a1a',
-    marginBottom: '20px',
-    margin: '0 0 20px 0',
-  },
-  overviewGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-    gap: '20px',
-  },
-  overviewItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-  },
-  overviewLabel: {
-    fontSize: '14px',
-    color: '#6b7280',
-    fontWeight: '500',
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
-  },
-  overviewValue: {
-    fontSize: '16px',
-    color: '#1a1a1a',
-    fontWeight: '600',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-  },
-  clientIcon: { fontSize: '18px' },
-  serviceIcon: { fontSize: '18px' },
-  dateIcon: { fontSize: '18px' },
-  timeIcon: { fontSize: '18px' },
-  durationIcon: { fontSize: '18px' },
-  priceIcon: { fontSize: '18px' },
-  idIcon: { fontSize: '18px', fontWeight: 'bold' },
-  clientInfoGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(250px, 1fr))',
-    gap: '20px',
-  },
-  contactItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-  },
-  contactLabel: {
-    fontSize: '14px',
-    color: '#6b7280',
-    fontWeight: '500',
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
-  },
-  contactValue: {
-    fontSize: '16px',
-    color: '#1a1a1a',
-    fontWeight: '500',
-  },
-  emailLink: {
-    color: '#2563eb',
-    textDecoration: 'none',
-  },
-  phoneLink: {
-    color: '#059669',
-    textDecoration: 'none',
-  },
-  serviceInfoGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-    gap: '20px',
-  },
-  serviceItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-  },
-  serviceLabel: {
-    fontSize: '14px',
-    color: '#6b7280',
-    fontWeight: '500',
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
-  },
-  serviceValue: {
-    fontSize: '16px',
-    color: '#1a1a1a',
-    fontWeight: '500',
-  },
-  notesContent: {
-    fontSize: '16px',
-    color: '#374151',
-    lineHeight: '1.6',
-    padding: '16px',
-    backgroundColor: '#f9fafb',
-    borderRadius: '8px',
-    border: '1px solid #e5e7eb',
-  },
-  metadataGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-    gap: '20px',
-  },
-  metadataItem: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-  },
-  metadataLabel: {
-    fontSize: '14px',
-    color: '#6b7280',
-    fontWeight: '500',
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
-  },
-  metadataValue: {
-    fontSize: '16px',
-    color: '#1a1a1a',
-    fontWeight: '500',
-  },
-  errorMessage: {
-    padding: '24px',
-    textAlign: 'center',
-    color: '#ef4444',
-    backgroundColor: '#fef2f2',
-    border: '1px solid #fecaca',
-    borderRadius: '12px',
-  },
-}
-
-const modalStyles = {
-  overlay: {
-    position: 'fixed',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 1000,
-  },
-  modal: {
-    backgroundColor: 'white',
-    borderRadius: '12px',
-    padding: '24px',
-    width: '90%',
-    maxWidth: '600px',
-    maxHeight: '80vh',
-    overflow: 'auto',
-    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
-  },
-  deleteModal: {
-    backgroundColor: 'white',
-    borderRadius: '12px',
-    padding: '24px',
-    width: '90%',
-    maxWidth: '400px',
-    textAlign: 'center',
-    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
-  },
-  header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: '24px',
-    paddingBottom: '16px',
-    borderBottom: '1px solid #e5e5e5',
-  },
-  title: {
-    fontSize: '24px',
-    fontWeight: 'bold',
-    color: '#1a1a1a',
-    margin: 0,
-  },
-  deleteTitle: {
-    fontSize: '20px',
-    fontWeight: 'bold',
-    color: '#1a1a1a',
-    marginBottom: '16px',
-  },
-  deleteMessage: {
-    fontSize: '16px',
-    color: '#6b7280',
-    marginBottom: '24px',
-    lineHeight: '1.5',
-  },
-  closeButton: {
-    background: 'none',
-    border: 'none',
-    fontSize: '24px',
-    cursor: 'pointer',
-    color: '#6b7280',
-    padding: '4px',
-  },
-  form: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '20px',
-  },
-  formRow: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '16px',
-  },
-  formGroup: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-  },
-  label: {
-    fontSize: '14px',
-    fontWeight: '600',
-    color: '#374151',
-  },
-  input: {
-    padding: '12px 16px',
-    borderRadius: '8px',
-    border: '1px solid #d1d5db',
-    fontSize: '14px',
-    outline: 'none',
-    transition: 'border-color 0.2s',
-  },
-  textarea: {
-    padding: '12px 16px',
-    borderRadius: '8px',
-    border: '1px solid #d1d5db',
-    fontSize: '14px',
-    outline: 'none',
-    resize: 'vertical',
-    fontFamily: 'inherit',
-  },
-  inputError: {
-    borderColor: '#ef4444',
-  },
-  errorText: {
-    fontSize: '12px',
-    color: '#ef4444',
-  },
-  submitError: {
-    padding: '12px 16px',
-    backgroundColor: '#fef2f2',
-    border: '1px solid #fecaca',
-    borderRadius: '8px',
-    color: '#ef4444',
-    fontSize: '14px',
-    textAlign: 'center',
-  },
-  buttonGroup: {
-    display: 'flex',
-    gap: '12px',
-    justifyContent: 'flex-end',
-  },
-  deleteButtonGroup: {
-    display: 'flex',
-    gap: '12px',
-    justifyContent: 'center',
-  },
-  cancelButton: {
-    padding: '12px 24px',
-    backgroundColor: 'transparent',
-    color: '#6b7280',
-    border: '1px solid #d1d5db',
-    borderRadius: '8px',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-  },
-  submitButton: {
-    padding: '12px 24px',
-    backgroundColor: '#2563eb',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-  },
-  submitButtonDisabled: {
-    backgroundColor: '#9ca3af',
-    cursor: 'not-allowed',
-  },
-  deleteConfirmButton: {
-    padding: '12px 24px',
-    backgroundColor: '#dc2626',
-    color: 'white',
-    border: 'none',
-    borderRadius: '8px',
-    fontSize: '14px',
-    fontWeight: '600',
-    cursor: 'pointer',
-  },
-  deleteConfirmButtonDisabled: {
-    backgroundColor: '#9ca3af',
-    cursor: 'not-allowed',
-  },
 }
 
 export default BookingDetailPage

@@ -18,8 +18,8 @@ import Booking from './pages/Booking'
 import Checkin from './pages/Checkin'
 import ProtectedRoute from './ui/ProtectedRoute'
 import ClientsPage from './pages/Clients'
-import BookingDetail from './features/bookings/BookingDetail'
 import Services from './pages/Services'
+import BookingDetailPage from './pages/BookingDetail'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -51,7 +51,7 @@ function App() {
               <Route path="bookings" element={<Bookings />} />
               <Route path="bookings/:bookingId" element={<Booking />} />
               <Route path="checkin/:bookingId" element={<Checkin />} />
-              <Route path="/bookings/:bookingId" element={<BookingDetail />} />
+              <Route path="/bookings/:bookingId" element={<BookingDetailPage />} />
 
               <Route path="services" element={<Services />} />
               <Route path="clients" element={<ClientsPage />} />
