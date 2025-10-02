@@ -1,9 +1,65 @@
-import React, { useState, useEffect } from 'react'
-import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom'
+import React, { useState, useEffect, useMemo } from 'react'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 
 import Spinner from '../../ui/Spinner'
 import { deleteBooking, getBooking, updateBooking } from '../../services/apiBookings'
 import { modalStyles, styles } from '../../styles/BookingDetailStyles'
+import { getStaff } from '../../services/apiStaff'
+import { getServices } from '../../services/apiServices'
+
+// Custom hook to use the getStaff function
+const useStaff = () => {
+  const [staff, setStaff] = React.useState([])
+  const [isLoading, setIsLoading] = React.useState(true)
+  const [error, setError] = React.useState(null)
+
+  React.useEffect(() => {
+    const fetchStaff = async () => {
+      try {
+        setIsLoading(true)
+        const staffData = await getStaff()
+        setStaff(staffData || [])
+      } catch (err) {
+        console.error('Error loading staff:', err)
+        setError(err)
+        setStaff([])
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchStaff()
+  }, [])
+
+  return { staff, isLoading, error }
+}
+
+// Custom hook to use the getServices function
+const useServices = () => {
+  const [services, setServices] = React.useState([])
+  const [isLoading, setIsLoading] = React.useState(true)
+  const [error, setError] = React.useState(null)
+
+  React.useEffect(() => {
+    const fetchServices = async () => {
+      try {
+        setIsLoading(true)
+        const servicesData = await getServices()
+        setServices(servicesData || [])
+      } catch (err) {
+        console.error('Error loading services:', err)
+        setError(err)
+        setServices([])
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchServices()
+  }, [])
+
+  return { services, isLoading, error }
+}
 
 // Custom hook to fetch booking details
 const useBookingDetail = (bookingId) => {
@@ -42,23 +98,91 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
     startTime: '',
     endTime: '',
     totalPrice: 0,
+    selectedServiceIds: [],
+    staffId: '',
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [formErrors, setFormErrors] = useState({})
+  const [serviceSearchTerm, setServiceSearchTerm] = useState('')
+
+  // Fetch services and staff
+  const { services, isLoading: servicesLoading } = useServices()
+  const { staff, isLoading: staffLoading } = useStaff()
+
+  // Filter services based on search term
+  const filteredServices = useMemo(() => {
+    if (!services) return []
+    if (!serviceSearchTerm.trim()) return services
+
+    const searchLower = serviceSearchTerm.toLowerCase()
+    return services.filter(
+      (service) =>
+        service.name.toLowerCase().includes(searchLower) ||
+        service.category?.toLowerCase().includes(searchLower) ||
+        service.description?.toLowerCase().includes(searchLower)
+    )
+  }, [services, serviceSearchTerm])
+
+  // Calculate total duration and price based on selected services
+  const selectedServicesInfo = useMemo(() => {
+    if (!services || formData.selectedServiceIds.length === 0) {
+      return { totalDuration: 0, totalPrice: 0, serviceNames: [] }
+    }
+
+    const selectedServices = services.filter((service) =>
+      formData.selectedServiceIds.includes(service.id.toString())
+    )
+
+    const totalDuration = selectedServices.reduce(
+      (sum, service) => sum + (service.duration || 0),
+      0
+    )
+    const totalPrice = selectedServices.reduce((sum, service) => {
+      const price = service.regularPrice || 0
+      const discount = service.discount || 0
+      return sum + (price - discount)
+    }, 0)
+    const serviceNames = selectedServices.map((service) => service.name)
+
+    return { totalDuration, totalPrice, serviceNames }
+  }, [services, formData.selectedServiceIds])
+
+  // Calculate end time based on start time and total duration
+  const calculateEndTime = (startTime, durationInMinutes) => {
+    if (!startTime || !durationInMinutes) return ''
+
+    const startDate = new Date(startTime)
+    const endDate = new Date(startDate.getTime() + durationInMinutes * 60000)
+
+    // Format to datetime-local format
+    const year = endDate.getFullYear()
+    const month = String(endDate.getMonth() + 1).padStart(2, '0')
+    const day = String(endDate.getDate()).padStart(2, '0')
+    const hours = String(endDate.getHours()).padStart(2, '0')
+    const minutes = String(endDate.getMinutes()).padStart(2, '0')
+
+    return `${year}-${month}-${day}T${hours}:${minutes}`
+  }
 
   useEffect(() => {
-    if (booking) {
-      // Helper function to convert UTC date to local datetime-local format
+    if (booking && services) {
       const toLocalDateTimeString = (dateString) => {
         if (!dateString) return ''
         const date = new Date(dateString)
-        // Get local datetime in the format needed for datetime-local input
         const year = date.getFullYear()
         const month = String(date.getMonth() + 1).padStart(2, '0')
         const day = String(date.getDate()).padStart(2, '0')
         const hours = String(date.getHours()).padStart(2, '0')
         const minutes = String(date.getMinutes()).padStart(2, '0')
         return `${year}-${month}-${day}T${hours}:${minutes}`
+      }
+
+      // Determine selected service IDs
+      let serviceIds = []
+      if (booking.serviceIds && Array.isArray(booking.serviceIds)) {
+        serviceIds = booking.serviceIds.map((id) => id.toString())
+      } else if (booking.serviceId) {
+        serviceIds = [booking.serviceId.toString()]
       }
 
       setFormData({
@@ -68,9 +192,26 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
         startTime: toLocalDateTimeString(booking.startTime),
         endTime: toLocalDateTimeString(booking.endTime),
         totalPrice: booking.totalPrice || 0,
+        selectedServiceIds: serviceIds,
+        staffId: booking.staffId ? booking.staffId.toString() : '',
       })
     }
-  }, [booking])
+  }, [booking, services])
+
+  // Auto-update end time and total price when start time or services change
+  useEffect(() => {
+    if (formData.startTime && selectedServicesInfo.totalDuration > 0) {
+      const calculatedEndTime = calculateEndTime(
+        formData.startTime,
+        selectedServicesInfo.totalDuration
+      )
+      setFormData((prev) => ({
+        ...prev,
+        endTime: calculatedEndTime,
+        totalPrice: selectedServicesInfo.totalPrice,
+      }))
+    }
+  }, [formData.startTime, selectedServicesInfo.totalDuration, selectedServicesInfo.totalPrice])
 
   const handleInputChange = (field, value) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
@@ -79,21 +220,26 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
     }
   }
 
+  const handleServiceSelection = (serviceId) => {
+    setFormData((prev) => ({
+      ...prev,
+      selectedServiceIds: prev.selectedServiceIds.includes(serviceId)
+        ? prev.selectedServiceIds.filter((id) => id !== serviceId)
+        : [...prev.selectedServiceIds, serviceId],
+    }))
+  }
+
   const validateForm = () => {
     const errors = {}
 
+    if (formData.selectedServiceIds.length === 0) {
+      errors.services = 'Please select at least one service'
+    }
     if (!formData.startTime) {
       errors.startTime = 'Start time is required'
     }
-    if (!formData.endTime) {
-      errors.endTime = 'End time is required'
-    }
-    if (
-      formData.startTime &&
-      formData.endTime &&
-      new Date(formData.startTime) >= new Date(formData.endTime)
-    ) {
-      errors.endTime = 'End time must be after start time'
+    if (!formData.staffId) {
+      errors.staffId = 'Staff member is required'
     }
 
     return errors
@@ -114,15 +260,18 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
         numClients: parseInt(formData.numClients),
         status: formData.status,
         notes: formData.notes,
-        // Don't use new Date().toISOString() - it converts to UTC
-        // Instead, append 'Z' to treat the local time as UTC, or use the value directly
-        startTime: formData.startTime, // Send as-is, let backend handle it
-        endTime: formData.endTime, // Send as-is, let backend handle it
+        startTime: formData.startTime,
+        endTime: formData.endTime,
         totalPrice: parseFloat(formData.totalPrice),
+        serviceIds: formData.selectedServiceIds.map((id) => parseInt(id)),
+        serviceId:
+          formData.selectedServiceIds.length === 1
+            ? parseInt(formData.selectedServiceIds[0])
+            : null,
+        staffId: parseInt(formData.staffId),
       }
 
       await updateBooking(booking.id, updateData)
-
       onBookingUpdated()
       onClose()
     } catch (error) {
@@ -135,10 +284,20 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
 
   const handleClose = () => {
     setFormErrors({})
+    setServiceSearchTerm('')
     onClose()
   }
 
   if (!isOpen) return null
+  if (servicesLoading || staffLoading) {
+    return (
+      <div style={modalStyles.overlay}>
+        <div style={modalStyles.modal}>
+          <Spinner />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div style={modalStyles.overlay} onClick={handleClose}>
@@ -151,40 +310,196 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
         </div>
 
         <form onSubmit={handleSubmit} style={modalStyles.form}>
-          <div style={modalStyles.formRow}>
-            <div style={modalStyles.formGroup}>
-              <label style={modalStyles.label}>Start Time *</label>
-              <input
-                type="datetime-local"
-                value={formData.startTime}
-                onChange={(e) => handleInputChange('startTime', e.target.value)}
-                style={{
-                  ...modalStyles.input,
-                  color: '#000000',
-                  WebkitTextFillColor: '#000000',
-                  ...(formErrors.startTime ? modalStyles.inputError : {}),
-                }}
-              />
-              {formErrors.startTime && (
-                <div style={modalStyles.errorText}>{formErrors.startTime}</div>
+          {/* Services Selection */}
+          <div style={modalStyles.formGroup}>
+            <label style={modalStyles.label}>Services (Select Multiple) *</label>
+
+            <input
+              type="text"
+              placeholder="Search services..."
+              value={serviceSearchTerm}
+              onChange={(e) => setServiceSearchTerm(e.target.value)}
+              style={{
+                ...modalStyles.input,
+                marginBottom: '8px',
+                color: '#000000',
+                WebkitTextFillColor: '#000000',
+              }}
+            />
+
+            <div
+              style={{
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                padding: '8px',
+                maxHeight: '200px',
+                overflowY: 'auto',
+                backgroundColor: 'white',
+              }}
+            >
+              {filteredServices.length > 0 ? (
+                filteredServices.map((service) => (
+                  <label
+                    key={service.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '8px',
+                      cursor: 'pointer',
+                      borderRadius: '4px',
+                      marginBottom: '4px',
+                      backgroundColor: formData.selectedServiceIds.includes(service.id.toString())
+                        ? '#e0f2fe'
+                        : 'transparent',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={formData.selectedServiceIds.includes(service.id.toString())}
+                      onChange={() => handleServiceSelection(service.id.toString())}
+                      style={{ marginRight: '8px' }}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: '500', fontSize: '14px', color: '#000' }}>
+                        {service.name}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#666' }}>
+                        {service.category && (
+                          <span
+                            style={{
+                              backgroundColor: '#e5e7eb',
+                              padding: '2px 6px',
+                              borderRadius: '3px',
+                              marginRight: '6px',
+                              fontSize: '11px',
+                            }}
+                          >
+                            {service.category}
+                          </span>
+                        )}
+                        {service.duration} min - $
+                        {(service.regularPrice || 0) - (service.discount || 0)}
+                        {service.discount > 0 && (
+                          <span
+                            style={{
+                              textDecoration: 'line-through',
+                              marginLeft: '4px',
+                              opacity: 0.7,
+                            }}
+                          >
+                            ${service.regularPrice}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </label>
+                ))
+              ) : (
+                <div
+                  style={{ padding: '16px', textAlign: 'center', color: '#666', fontSize: '14px' }}
+                >
+                  No services found matching &#39;{serviceSearchTerm}&#39;
+                </div>
               )}
             </div>
 
-            <div style={modalStyles.formGroup}>
-              <label style={modalStyles.label}>End Time *</label>
-              <input
-                type="datetime-local"
-                value={formData.endTime}
-                onChange={(e) => handleInputChange('endTime', e.target.value)}
+            {serviceSearchTerm && (
+              <button
+                type="button"
+                onClick={() => setServiceSearchTerm('')}
                 style={{
-                  ...modalStyles.input,
-                  color: '#000000',
-                  WebkitTextFillColor: '#000000',
-                  ...(formErrors.endTime ? modalStyles.inputError : {}),
+                  marginTop: '8px',
+                  padding: '6px 12px',
+                  fontSize: '12px',
+                  color: '#2563eb',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
                 }}
-              />
-              {formErrors.endTime && <div style={modalStyles.errorText}>{formErrors.endTime}</div>}
-            </div>
+              >
+                Clear search
+              </button>
+            )}
+
+            {formErrors.services && <div style={modalStyles.errorText}>{formErrors.services}</div>}
+
+            {selectedServicesInfo.totalDuration > 0 && (
+              <div
+                style={{
+                  marginTop: '8px',
+                  padding: '8px',
+                  backgroundColor: '#f0f9ff',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                }}
+              >
+                <strong>Selected:</strong> {selectedServicesInfo.serviceNames.join(', ')}
+                <br />
+                <strong>Total Duration:</strong> {selectedServicesInfo.totalDuration} minutes
+                <br />
+                <strong>Total Price:</strong> ${selectedServicesInfo.totalPrice}
+              </div>
+            )}
+          </div>
+
+          {/* Start Time */}
+          <div style={modalStyles.formGroup}>
+            <label style={modalStyles.label}>Start Time *</label>
+            <input
+              type="datetime-local"
+              value={formData.startTime}
+              onChange={(e) => handleInputChange('startTime', e.target.value)}
+              style={{
+                ...modalStyles.input,
+                color: '#000000',
+                WebkitTextFillColor: '#000000',
+                ...(formErrors.startTime ? modalStyles.inputError : {}),
+              }}
+            />
+            {formErrors.startTime && (
+              <div style={modalStyles.errorText}>{formErrors.startTime}</div>
+            )}
+          </div>
+
+          {/* End Time (Auto-calculated) */}
+          <div style={modalStyles.formGroup}>
+            <label style={modalStyles.label}>End Time (Auto-calculated)</label>
+            <input
+              type="datetime-local"
+              value={formData.endTime}
+              disabled
+              style={{
+                ...modalStyles.input,
+                backgroundColor: '#f9fafb',
+                color: '#000000',
+                WebkitTextFillColor: '#000000',
+              }}
+            />
+          </div>
+
+          {/* Staff Selection */}
+          <div style={modalStyles.formGroup}>
+            <label style={modalStyles.label}>Staff Member *</label>
+            <select
+              value={formData.staffId}
+              onChange={(e) => handleInputChange('staffId', e.target.value)}
+              style={{
+                ...modalStyles.select,
+                color: '#000000',
+                WebkitTextFillColor: '#000000',
+                ...(formErrors.staffId ? modalStyles.inputError : {}),
+              }}
+            >
+              <option value="">Select staff member</option>
+              {staff &&
+                staff.map((staffMember) => (
+                  <option key={staffMember.id} value={staffMember.id}>
+                    {staffMember.name || staffMember.id}
+                  </option>
+                ))}
+            </select>
+            {formErrors.staffId && <div style={modalStyles.errorText}>{formErrors.staffId}</div>}
           </div>
 
           <div style={modalStyles.formRow}>
@@ -204,17 +519,19 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
             </div>
 
             <div style={modalStyles.formGroup}>
-              <label style={modalStyles.label}>Total Price</label>
+              <label style={modalStyles.label}>Total Price (Auto-calculated)</label>
               <input
-                type="number"
-                step="0.01"
-                min="0"
-                value={formData.totalPrice}
-                onChange={(e) => handleInputChange('totalPrice', e.target.value)}
+                type="text"
+                value={`${formData.totalPrice}`}
+                disabled
                 style={{
                   ...modalStyles.input,
+                  backgroundColor: '#f9fafb',
                   color: '#000000',
                   WebkitTextFillColor: '#000000',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
                 }}
               />
             </div>
@@ -506,6 +823,14 @@ const BookingDetailPage = () => {
               <div style={styles.overviewValue}>
                 <span style={styles.serviceIcon}>💼</span>
                 {getServiceDisplay()}
+              </div>
+            </div>
+
+            <div style={styles.overviewItem}>
+              <div style={styles.overviewLabel}>Staff</div>
+              <div style={styles.overviewValue}>
+                <span style={styles.serviceIcon}>👤</span>
+                {booking.staff.name}
               </div>
             </div>
 

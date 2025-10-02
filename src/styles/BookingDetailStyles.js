@@ -313,6 +313,8 @@ export const modalStyles = {
     color: '#374151',
   },
   input: {
+    width: '100%',
+    boxSizing: 'border-box',
     padding: '12px 16px',
     borderRadius: '8px',
     border: '1px solid #d1d5db',
@@ -321,6 +323,8 @@ export const modalStyles = {
     transition: 'border-color 0.2s',
   },
   select: {
+    width: '100%',
+    boxSizing: 'border-box',
     padding: '12px 16px',
     borderRadius: '8px',
     border: '1px solid #d1d5db',
@@ -330,6 +334,8 @@ export const modalStyles = {
     cursor: 'pointer',
   },
   textarea: {
+    width: '100%',
+    boxSizing: 'border-box',
     padding: '12px 16px',
     borderRadius: '8px',
     border: '1px solid #d1d5db',
