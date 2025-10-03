@@ -268,10 +268,12 @@ const BookingCalendar = () => {
     )
   }, [services, serviceSearchTerm])
 
-  // Calculate total duration and price based on selected services
+  // Calculate total duration and price based on selected services - UPDATED TO HANDLE "+" SUFFIX
+  // Calculate total duration and price based on selected services - FIXED FOR TEXT FORMAT
+  // Calculate total duration and price based on selected services - ROBUST FIX
   const selectedServicesInfo = useMemo(() => {
     if (!services || createFormData.selectedServiceIds.length === 0) {
-      return { totalDuration: 0, totalPrice: 0, serviceNames: [] }
+      return { totalDuration: 0, totalPrice: '0', serviceNames: [] }
     }
 
     const selectedServices = services.filter((service) =>
@@ -282,11 +284,44 @@ const BookingCalendar = () => {
       (sum, service) => sum + (service.duration || 0),
       0
     )
-    const totalPrice = selectedServices.reduce((sum, service) => {
-      const price = service.regularPrice || 0
-      const discount = service.discount || 0
-      return sum + (price - discount)
-    }, 0)
+
+    // Handle "+" suffix in prices (prices are stored as text like "20+")
+    let totalPriceNum = 0
+    let hasPlus = false
+    let hasNonNumeric = false
+
+    selectedServices.forEach((service) => {
+      // regularPrice and discount are TEXT fields that may contain "+", "POA", etc.
+      const regularPriceStr = service.regularPrice ? String(service.regularPrice) : '0'
+      const discountStr = service.discount ? String(service.discount) : '0'
+
+      // Check if any price has "+" suffix
+      if (regularPriceStr.includes('+')) {
+        hasPlus = true
+      }
+
+      // Extract numeric values by removing "+"
+      const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
+      const discountNum = parseFloat(discountStr.replace('+', ''))
+
+      // Check if parsing resulted in valid numbers
+      if (isNaN(regularPriceNum) || isNaN(discountNum)) {
+        hasNonNumeric = true
+      } else {
+        totalPriceNum += regularPriceNum - discountNum
+      }
+    })
+
+    // Return total price as text with "+" if any service had it
+    let totalPrice
+    if (hasNonNumeric) {
+      totalPrice = 'POA' // Price on application
+    } else if (hasPlus) {
+      totalPrice = `${totalPriceNum}+`
+    } else {
+      totalPrice = `${totalPriceNum}`
+    }
+
     const serviceNames = selectedServices.map((service) => service.name)
 
     return { totalDuration, totalPrice, serviceNames, selectedServices }
@@ -542,13 +577,16 @@ const BookingCalendar = () => {
       const formattedStartTime = formatDateForDatabase(startDateTime)
       const formattedEndTime = formatDateForDatabase(endDateTime)
 
+      // Keep the price as-is (with "+" if present) since it's stored as TEXT in database
+      const priceValue = selectedServicesInfo.totalPrice
+
       const bookingData = {
         date: selectedDate,
         startTime: formattedStartTime,
         endTime: formattedEndTime,
         numClients: parseInt(createFormData.numClients),
-        price: selectedServicesInfo.totalPrice,
-        totalPrice: selectedServicesInfo.totalPrice,
+        price: priceValue,
+        totalPrice: priceValue,
         status: createFormData.status,
         notes: createFormData.notes,
         serviceIds: createFormData.selectedServiceIds.map((id) => parseInt(id)),
@@ -590,7 +628,7 @@ const BookingCalendar = () => {
 
       // Refresh bookings data to show the new booking
       if (refetch) {
-        await refetch() // Trigger refetch to update bookings
+        await refetch()
       }
     } catch (error) {
       console.error('Error creating booking:', error)
@@ -1049,7 +1087,29 @@ const BookingCalendar = () => {
                                 </span>
                               )}
                               {service.duration} min - $
-                              {(service.regularPrice || 0) - (service.discount || 0)}
+                              {(() => {
+                                // Service prices are TEXT format (e.g., "20+", "POA", etc.)
+                                const regularPriceStr = service.regularPrice
+                                  ? String(service.regularPrice)
+                                  : '0'
+                                const discountStr = service.discount
+                                  ? String(service.discount)
+                                  : '0'
+
+                                const hasPlus = regularPriceStr.includes('+')
+                                const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
+                                const discountNum = parseFloat(discountStr.replace('+', ''))
+
+                                // Check if we got valid numbers
+                                if (isNaN(regularPriceNum)) {
+                                  return regularPriceStr // Return original text (e.g., "POA")
+                                }
+
+                                const finalPrice =
+                                  regularPriceNum - (isNaN(discountNum) ? 0 : discountNum)
+
+                                return hasPlus ? `${finalPrice}+` : `${finalPrice}`
+                              })()}
                               {service.discount > 0 && (
                                 <span
                                   style={{

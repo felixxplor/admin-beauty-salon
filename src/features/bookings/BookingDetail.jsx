@@ -97,7 +97,7 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
     notes: '',
     startTime: '',
     endTime: '',
-    totalPrice: 0,
+    totalPrice: '0',
     selectedServiceIds: [],
     staffId: '',
   })
@@ -123,10 +123,10 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
     )
   }, [services, serviceSearchTerm])
 
-  // Calculate total duration and price based on selected services
+  // Calculate total duration and price based on selected services - FIXED FOR "+" HANDLING
   const selectedServicesInfo = useMemo(() => {
     if (!services || formData.selectedServiceIds.length === 0) {
-      return { totalDuration: 0, totalPrice: 0, serviceNames: [] }
+      return { totalDuration: 0, totalPrice: '0', serviceNames: [] }
     }
 
     const selectedServices = services.filter((service) =>
@@ -137,11 +137,44 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
       (sum, service) => sum + (service.duration || 0),
       0
     )
-    const totalPrice = selectedServices.reduce((sum, service) => {
-      const price = service.regularPrice || 0
-      const discount = service.discount || 0
-      return sum + (price - discount)
-    }, 0)
+
+    // Handle "+" suffix in prices (prices are stored as text like "20+")
+    let totalPriceNum = 0
+    let hasPlus = false
+    let hasNonNumeric = false
+
+    selectedServices.forEach((service) => {
+      // regularPrice and discount are TEXT fields that may contain "+", "POA", etc.
+      const regularPriceStr = service.regularPrice ? String(service.regularPrice) : '0'
+      const discountStr = service.discount ? String(service.discount) : '0'
+
+      // Check if any price has "+" suffix
+      if (regularPriceStr.includes('+')) {
+        hasPlus = true
+      }
+
+      // Extract numeric values by removing "+"
+      const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
+      const discountNum = parseFloat(discountStr.replace('+', ''))
+
+      // Check if parsing resulted in valid numbers
+      if (isNaN(regularPriceNum) || isNaN(discountNum)) {
+        hasNonNumeric = true
+      } else {
+        totalPriceNum += regularPriceNum - discountNum
+      }
+    })
+
+    // Return total price as text with "+" if any service had it
+    let totalPrice
+    if (hasNonNumeric) {
+      totalPrice = 'POA' // Price on application
+    } else if (hasPlus) {
+      totalPrice = `${totalPriceNum}+`
+    } else {
+      totalPrice = `${totalPriceNum}`
+    }
+
     const serviceNames = selectedServices.map((service) => service.name)
 
     return { totalDuration, totalPrice, serviceNames }
@@ -191,7 +224,7 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
         notes: booking.notes || '',
         startTime: toLocalDateTimeString(booking.startTime),
         endTime: toLocalDateTimeString(booking.endTime),
-        totalPrice: booking.totalPrice || 0,
+        totalPrice: booking.totalPrice ? String(booking.totalPrice) : '0',
         selectedServiceIds: serviceIds,
         staffId: booking.staffId ? booking.staffId.toString() : '',
       })
@@ -256,13 +289,16 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
 
     setIsSubmitting(true)
     try {
+      // Keep the price as-is (with "+" if present) since it's stored as TEXT in database
+      const priceValue = formData.totalPrice
+
       const updateData = {
         numClients: parseInt(formData.numClients),
         status: formData.status,
         notes: formData.notes,
         startTime: formData.startTime,
         endTime: formData.endTime,
-        totalPrice: parseFloat(formData.totalPrice),
+        totalPrice: priceValue,
         serviceIds: formData.selectedServiceIds.map((id) => parseInt(id)),
         serviceId:
           formData.selectedServiceIds.length === 1
@@ -378,7 +414,27 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
                           </span>
                         )}
                         {service.duration} min - $
-                        {(service.regularPrice || 0) - (service.discount || 0)}
+                        {(() => {
+                          // Service prices are TEXT format (e.g., "20+", "POA")
+                          const regularPriceStr = service.regularPrice
+                            ? String(service.regularPrice)
+                            : '0'
+                          const discountStr = service.discount ? String(service.discount) : '0'
+
+                          const hasPlus = regularPriceStr.includes('+')
+                          const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
+                          const discountNum = parseFloat(discountStr.replace('+', ''))
+
+                          // Check if we got valid numbers
+                          if (isNaN(regularPriceNum)) {
+                            return regularPriceStr // Return original text (e.g., "POA")
+                          }
+
+                          const finalPrice =
+                            regularPriceNum - (isNaN(discountNum) ? 0 : discountNum)
+
+                          return hasPlus ? `${finalPrice}+` : `${finalPrice}`
+                        })()}
                         {service.discount > 0 && (
                           <span
                             style={{
@@ -522,7 +578,7 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
               <label style={modalStyles.label}>Total Price (Auto-calculated)</label>
               <input
                 type="text"
-                value={`${formData.totalPrice}`}
+                value={`$${formData.totalPrice}`}
                 disabled
                 style={{
                   ...modalStyles.input,
