@@ -247,7 +247,7 @@ const BookingCalendar = () => {
     }
   }, [searchParams, setSearchParams])
 
-  const { bookings, isLoading } = useBookings()
+  const { bookings, isLoading, refetch } = useBookings()
   const { staff, isLoading: staffLoading, error: staffError } = useStaff()
   const { services, isLoading: servicesLoading, error: servicesError } = useServices()
   const { clients, isLoading: clientsLoading, error: clientsError } = useClients()
@@ -543,7 +543,7 @@ const BookingCalendar = () => {
       const formattedEndTime = formatDateForDatabase(endDateTime)
 
       const bookingData = {
-        date: selectedDate, // FIX 1: Use string directly, not Date object
+        date: selectedDate,
         startTime: formattedStartTime,
         endTime: formattedEndTime,
         numClients: parseInt(createFormData.numClients),
@@ -564,13 +564,14 @@ const BookingCalendar = () => {
       if (createFormData.clientId) {
         bookingData.clientId = parseInt(createFormData.clientId)
       } else {
-        // FIX 2: Store name and phone for non-client bookings
         bookingData.name = createFormData.name || null
         bookingData.phone = createFormData.phone
       }
 
+      // Create the booking
       await createBooking(bookingData)
 
+      // Close the modal and reset form
       closeModal()
       setCreateFormData({
         clientId: '',
@@ -584,7 +585,13 @@ const BookingCalendar = () => {
         status: 'pending',
       })
 
-      window.location.reload()
+      // Ensure day view is maintained
+      setSearchParams({ date: selectedDate, view: 'day' })
+
+      // Refresh bookings data to show the new booking
+      if (refetch) {
+        await refetch() // Trigger refetch to update bookings
+      }
     } catch (error) {
       console.error('Error creating booking:', error)
       alert('Failed to create booking. Please try again.')
@@ -688,7 +695,9 @@ const BookingCalendar = () => {
     return (
       <div style={calendarStyles.container}>
         <button
-          onClick={() => setShowCreateModal(true)}
+          onClick={() => {
+            setShowCreateModal(true)
+          }}
           style={calendarStyles.createBookingButton}
           onMouseOver={(e) => (e.target.style.backgroundColor = '#1d4ed8')}
           onMouseOut={(e) => (e.target.style.backgroundColor = '#2563eb')}

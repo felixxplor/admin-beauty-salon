@@ -27,6 +27,7 @@ export function useBookings() {
     isLoading,
     data: { data: bookings, count } = {},
     error,
+    refetch,
   } = useQuery({
     queryKey: ['bookings', filter, sortBy, page],
     queryFn: () => getBookings({ filter, sortBy, page }),
@@ -47,5 +48,5 @@ export function useBookings() {
       queryFn: () => getBookings({ filter, sortBy, page: page - 1 }),
     })
 
-  return { isLoading, error, bookings, count }
+  return { isLoading, error, bookings, count, refetch }
 }
