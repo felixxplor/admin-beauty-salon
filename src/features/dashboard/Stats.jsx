@@ -11,6 +11,7 @@ import {
 function Stats({ bookings, serviceCount }) {
   // Add safety check for bookings data
   const safeBookings = bookings || []
+  console.log('Bookings:', bookings)
 
   // Helper function to check if a startTime is today
   const isToday = (startTimeString) => {
