@@ -433,7 +433,12 @@ const BookingCalendar = () => {
         originalBooking: booking, // Keep reference to original booking data
         service: serviceDisplay,
         client: booking.client?.fullName || booking.client?.email || booking.name || booking.phone,
-        date: booking.date || startTime.toISOString().split('T')[0],
+        date: (() => {
+  const year = startTime.getFullYear()
+  const month = String(startTime.getMonth() + 1).padStart(2, '0')
+  const day = String(startTime.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+})(),
         time: formatTime(localStartHours, localStartMinutes), // Use local time
         endTime: formatTime(localEndHours, localEndMinutes), // Use local time
         staff: staffMember,
