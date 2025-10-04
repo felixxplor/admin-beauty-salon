@@ -344,6 +344,12 @@ const BookingCalendar = () => {
     // Wait for both bookings and staff data to be loaded before transforming
     if (!bookings || bookings.length === 0 || staff.length === 0) return []
 
+    // DEBUG - check what dates are in the raw data
+console.log('Raw bookings for Oct 4:', bookings.filter(b => {
+  const dateStr = b.date || new Date(b.startTime).toISOString().split('T')[0]
+  return dateStr.includes('2025-10-04') || dateStr.includes('10-04') || dateStr.includes('04-10')
+}))
+
     return bookings.map((booking) => {
       // Handle both ISO string and Date object formats, with null checks
       let startTime, endTime
@@ -433,7 +439,7 @@ const BookingCalendar = () => {
         originalBooking: booking, // Keep reference to original booking data
         service: serviceDisplay,
         client: booking.client?.fullName || booking.client?.email || booking.name || booking.phone,
-        date: (() => {
+        date: booking.date || (() => {
   const year = startTime.getFullYear()
   const month = String(startTime.getMonth() + 1).padStart(2, '0')
   const day = String(startTime.getDate()).padStart(2, '0')
