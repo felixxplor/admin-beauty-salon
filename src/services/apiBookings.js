@@ -2,7 +2,7 @@ import { PAGE_SIZE } from '../utils/constants'
 import { getToday } from '../utils/helpers'
 import supabase from './supabase'
 
-export async function getBookings({ filter, sortBy, page }) {
+export async function getBookings({ filter, sortBy, page } = {}) {
   let query = supabase
     .from('bookings')
     .select(
@@ -12,10 +12,14 @@ export async function getBookings({ filter, sortBy, page }) {
   
   if (filter) query = query[filter.method || 'eq'](filter.field, filter.value)
   
-  if (sortBy)
+  if (sortBy) {
     query = query.order(sortBy.field, {
       ascending: sortBy.direction === 'asc',
     })
+  } else {
+    // Default sorting when no sortBy is provided
+    query = query.order('created_at', { ascending: false })
+  }
   
   // Only apply pagination if page is provided
   if (page) {
