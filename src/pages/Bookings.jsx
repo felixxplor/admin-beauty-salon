@@ -445,6 +445,17 @@ const BookingCalendar = () => {
         created_at: booking.created_at,
       }
 
+      if (startTime.getDate() === 4 && startTime.getMonth() === 9) { // Oct 4th
+  console.log('Oct 4 booking:', {
+    id: booking.id,
+    rawDate: booking.date,
+    rawStartTime: booking.startTime,
+    parsedStartTime: startTime,
+    finalDate: booking.date || startTime.toISOString().split('T')[0],
+    client: booking.client?.fullName || booking.name
+  })
+}
+
       return transformedBooking
     })
   }, [bookings, staff])
