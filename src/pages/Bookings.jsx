@@ -350,10 +350,7 @@ console.log('Raw bookings for Oct 4:', bookings.filter(b => {
   return dateStr.includes('2025-10-04') || dateStr.includes('10-04') || dateStr.includes('04-10')
 }))
 
-    console.log('ALL TRANSFORMED BOOKINGS:')
-transformedBookings.forEach(booking => {
-  console.log(`ID: ${booking.id}, Date: ${booking.date}, Client: ${booking.client}, Service: ${booking.service}`)
-})
+
 
 console.log('\nBOOKINGS BY DATE OBJECT:', bookingsByDate)
 
@@ -477,6 +474,11 @@ console.log('\nBOOKINGS BY DATE OBJECT:', bookingsByDate)
       return transformedBooking
     })
   }, [bookings, staff])
+
+      console.log('ALL TRANSFORMED BOOKINGS:')
+transformedBookings.forEach(booking => {
+  console.log(`ID: ${booking.id}, Date: ${booking.date}, Client: ${booking.client}, Service: ${booking.service}`)
+})
 
   // Get bookings grouped by date
   const bookingsByDate = useMemo(() => {
