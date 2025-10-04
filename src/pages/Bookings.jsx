@@ -350,6 +350,13 @@ console.log('Raw bookings for Oct 4:', bookings.filter(b => {
   return dateStr.includes('2025-10-04') || dateStr.includes('10-04') || dateStr.includes('04-10')
 }))
 
+    console.log('ALL TRANSFORMED BOOKINGS:')
+transformedBookings.forEach(booking => {
+  console.log(`ID: ${booking.id}, Date: ${booking.date}, Client: ${booking.client}, Service: ${booking.service}`)
+})
+
+console.log('\nBOOKINGS BY DATE OBJECT:', bookingsByDate)
+
     return bookings.map((booking) => {
       // Handle both ISO string and Date object formats, with null checks
       let startTime, endTime
