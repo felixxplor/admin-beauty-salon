@@ -268,9 +268,7 @@ const BookingCalendar = () => {
     )
   }, [services, serviceSearchTerm])
 
-  // Calculate total duration and price based on selected services - UPDATED TO HANDLE "+" SUFFIX
-  // Calculate total duration and price based on selected services - FIXED FOR TEXT FORMAT
-  // Calculate total duration and price based on selected services - ROBUST FIX
+  // Calculate total duration and price based on selected services
   const selectedServicesInfo = useMemo(() => {
     if (!services || createFormData.selectedServiceIds.length === 0) {
       return { totalDuration: 0, totalPrice: '0', serviceNames: [] }
@@ -433,12 +431,14 @@ const BookingCalendar = () => {
         originalBooking: booking, // Keep reference to original booking data
         service: serviceDisplay,
         client: booking.client?.fullName || booking.client?.email || booking.name || booking.phone,
-        date: booking.date || (() => {
-  const year = startTime.getFullYear()
-  const month = String(startTime.getMonth() + 1).padStart(2, '0')
-  const day = String(startTime.getDate()).padStart(2, '0')
-  return `${year}-${month}-${day}`
-})(),
+        date:
+          booking.date ||
+          (() => {
+            const year = startTime.getFullYear()
+            const month = String(startTime.getMonth() + 1).padStart(2, '0')
+            const day = String(startTime.getDate()).padStart(2, '0')
+            return `${year}-${month}-${day}`
+          })(),
         time: formatTime(localStartHours, localStartMinutes), // Use local time
         endTime: formatTime(localEndHours, localEndMinutes), // Use local time
         staff: staffMember,
@@ -450,21 +450,21 @@ const BookingCalendar = () => {
         created_at: booking.created_at,
       }
 
-      if (startTime.getDate() === 4 && startTime.getMonth() === 9) { // Oct 4th
-  console.log('Oct 4 booking:', {
-    id: booking.id,
-    rawDate: booking.date,
-    rawStartTime: booking.startTime,
-    parsedStartTime: startTime,
-    finalDate: booking.date || startTime.toISOString().split('T')[0],
-    client: booking.client?.fullName || booking.name
-  })
-}
+      if (startTime.getDate() === 4 && startTime.getMonth() === 9) {
+        // Oct 4th
+        console.log('Oct 4 booking:', {
+          id: booking.id,
+          rawDate: booking.date,
+          rawStartTime: booking.startTime,
+          parsedStartTime: startTime,
+          finalDate: booking.date || startTime.toISOString().split('T')[0],
+          client: booking.client?.fullName || booking.name,
+        })
+      }
 
       return transformedBooking
     })
   }, [bookings, staff])
-
 
   // Get bookings grouped by date
   const bookingsByDate = useMemo(() => {
@@ -536,37 +536,40 @@ const BookingCalendar = () => {
     setServiceSearchTerm('')
   }
 
-  // FIXED: getBookingForSlot function with proper staffId handling
-  const getBookingForSlot = (staffMember, timeSlot, date) => {
-    const dayBookings = bookingsByDate[date] || []
-
-    return dayBookings.find((booking) => {
-      // Convert both to numbers for proper comparison
+  // Function to get booking info for rendering - only returns booking at its START time
+  const getBookingInfo = (staffMember, timeSlot, date, dayBookings) => {
+    const booking = dayBookings.find((booking) => {
       const bookingStaffId = parseInt(booking.staffId)
       const staffMemberId = parseInt(staffMember.id)
 
-      // Handle undefined/null staffId - if booking has no staffId, show it for "Any" staff (id: 2)
       let staffMatch = false
       if (booking.staffId === undefined || booking.staffId === null) {
-        staffMatch = staffMemberId === 2 // Show unassigned bookings in "Any" column
+        staffMatch = staffMemberId === 2
       } else {
-        staffMatch = bookingStaffId === staffMemberId // Exact match for assigned bookings
+        staffMatch = bookingStaffId === staffMemberId
       }
 
-      // Time matching: compare time strings directly
-      const timeToMinutes = (timeStr) => {
-        const [hours, minutes] = timeStr.split(':').map(Number)
-        return hours * 60 + minutes
-      }
-
-      const slotMinutes = timeToMinutes(timeSlot)
-      const bookingStartMinutes = timeToMinutes(booking.time)
-      const bookingEndMinutes = timeToMinutes(booking.endTime)
-
-      const timeMatch = slotMinutes >= bookingStartMinutes && slotMinutes < bookingEndMinutes + 15
-
-      return staffMatch && timeMatch
+      // Check if this time slot is the START of the booking
+      return staffMatch && booking.time === timeSlot
     })
+
+    if (!booking) return null
+
+    // Calculate how many 15-minute slots this booking spans
+    const timeToMinutes = (timeStr) => {
+      const [hours, minutes] = timeStr.split(':').map(Number)
+      return hours * 60 + minutes
+    }
+
+    const startMinutes = timeToMinutes(booking.time)
+    const endMinutes = timeToMinutes(booking.endTime)
+    const durationMinutes = endMinutes - startMinutes
+    const slotsSpanned = Math.ceil(durationMinutes / 15)
+
+    return {
+      booking,
+      slotsSpanned,
+    }
   }
 
   const handleCreateBooking = async (e) => {
@@ -739,38 +742,52 @@ const BookingCalendar = () => {
 
   if (view === 'day' && selectedDate) {
     const dayBookings = bookingsByDate[selectedDate] || []
-
-    // Filter staff to only show those working on this day
     const workingStaff = getStaffWorkingOnDay(selectedDate, staff, staffShifts)
-
-    // Calculate grid template columns dynamically based on number of WORKING staff
     const staffGridColumns = workingStaff.map(() => '120px').join(' ')
     const staffHeaderGridColumns = `repeat(${workingStaff.length}, 120px)`
 
     return (
-      <div style={calendarStyles.container}>
-        <button
-          onClick={() => {
-            setShowCreateModal(true)
+      <div
+        style={{
+          width: '100%',
+          height: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          position: 'relative',
+        }}
+      >
+        {/* Day View Header - STICKY */}
+        <div
+          style={{
+            padding: '16px 24px',
+            backgroundColor: 'white',
+            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexShrink: 0,
+            zIndex: 100,
           }}
-          style={calendarStyles.createBookingButton}
-          onMouseOver={(e) => (e.target.style.backgroundColor = '#1d4ed8')}
-          onMouseOut={(e) => (e.target.style.backgroundColor = '#2563eb')}
         >
-          + Create Booking
-        </button>
-        {/* Day View Header */}
-        <div style={calendarStyles.dayViewHeader}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <button
               onClick={() => setView('calendar')}
-              style={calendarStyles.backButton}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: 'transparent',
+                border: '1px solid #e5e7eb',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                color: '#2563eb',
+              }}
               onMouseOver={(e) => (e.target.style.backgroundColor = '#f0f8ff')}
               onMouseOut={(e) => (e.target.style.backgroundColor = 'transparent')}
             >
               ← Back to Calendar
             </button>
-            <h1 style={calendarStyles.dayViewTitle}>
+            <h1 style={{ fontSize: '20px', fontWeight: '600', margin: 0 }}>
               Bookings for{' '}
               {new Date(selectedDate).toLocaleDateString('en-US', {
                 weekday: 'long',
@@ -781,27 +798,88 @@ const BookingCalendar = () => {
             </h1>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: '#2563eb',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '14px',
+                fontWeight: '500',
+                cursor: 'pointer',
+              }}
+              onMouseOver={(e) => (e.target.style.backgroundColor = '#1d4ed8')}
+              onMouseOut={(e) => (e.target.style.backgroundColor = '#2563eb')}
+            >
+              + Create Booking
+            </button>
             <div style={{ fontSize: '14px', color: '#666' }}>
               Total bookings: {dayBookings.length}
             </div>
           </div>
         </div>
 
-        {/* Schedule Grid */}
-        <div style={calendarStyles.scheduleGrid}>
-          <div style={calendarStyles.scheduleHeader}>
-            <div style={calendarStyles.scheduleHeaderLeft}>Time / Staff</div>
+        {/* Scrollable Content Area */}
+        <div
+          style={{
+            flex: 1,
+            overflowY: 'auto',
+            overflowX: 'auto',
+            position: 'relative',
+            backgroundColor: '#f9fafb',
+          }}
+        >
+          {/* Time/Staff Header - STICKY */}
+          <div
+            style={{
+              position: 'sticky',
+              top: 0,
+              zIndex: 50,
+              backgroundColor: 'white',
+              borderBottom: '2px solid #e5e7eb',
+              display: 'grid',
+              gridTemplateColumns: '100px 1fr',
+            }}
+          >
             <div
               style={{
-                ...calendarStyles.scheduleHeaderRight,
+                padding: '12px 16px',
+                fontWeight: '600',
+                fontSize: '14px',
+                borderRight: '1px solid #e5e7eb',
+                display: 'flex',
+                alignItems: 'center',
+              }}
+            >
+              Time / Staff
+            </div>
+            <div
+              style={{
+                display: 'grid',
                 gridTemplateColumns: staffHeaderGridColumns,
+                gap: 0,
               }}
             >
               {workingStaff.map((staffMember) => {
                 const staffName =
                   typeof staffMember === 'string' ? staffMember : staffMember.name || staffMember.id
                 return (
-                  <div key={staffMember.id || staffName} style={calendarStyles.staffHeader}>
+                  <div
+                    key={staffMember.id || staffName}
+                    style={{
+                      padding: '12px 8px',
+                      fontWeight: '600',
+                      fontSize: '13px',
+                      textAlign: 'center',
+                      borderRight: '1px solid #e5e7eb',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '4px',
+                    }}
+                  >
                     <span style={{ fontSize: '12px' }}>👤</span>
                     <span
                       style={{
@@ -818,41 +896,86 @@ const BookingCalendar = () => {
             </div>
           </div>
 
+          {/* Time Slots */}
           {timeSlots.map((timeSlot) => (
-            <div key={timeSlot} style={calendarStyles.timeRow}>
-              <div style={calendarStyles.timeCell}>{timeSlot}</div>
+            <div
+              key={timeSlot}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '100px 1fr',
+                borderBottom: '1px solid #e5e7eb',
+                minHeight: '40px',
+              }}
+            >
               <div
                 style={{
-                  ...calendarStyles.staffSlotsRow,
+                  padding: '8px 16px',
+                  fontSize: '13px',
+                  fontWeight: '500',
+                  color: '#666',
+                  borderRight: '1px solid #e5e7eb',
+                  backgroundColor: 'white',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                {timeSlot}
+              </div>
+              <div
+                style={{
+                  display: 'grid',
                   gridTemplateColumns: staffGridColumns,
+                  gap: 0,
                 }}
               >
                 {workingStaff.map((staffMember) => {
-                  const booking = getBookingForSlot(staffMember, timeSlot, selectedDate)
+                  const bookingInfo = getBookingInfo(
+                    staffMember,
+                    timeSlot,
+                    selectedDate,
+                    dayBookings
+                  )
+
                   return (
-                    <div key={`${staffMember.id}-${timeSlot}`} style={calendarStyles.staffSlot}>
-                      {booking ? (
+                    <div
+                      key={`${staffMember.id}-${timeSlot}`}
+                      style={{
+                        position: 'relative',
+                        borderRight: '1px solid #e5e7eb',
+                        backgroundColor: 'white',
+                        minHeight: '40px',
+                      }}
+                    >
+                      {bookingInfo ? (
                         <div
                           style={{
-                            ...calendarStyles.bookingBlock,
-                            ...(booking.status === 'completed'
+                            ...(bookingInfo.booking.status === 'completed'
                               ? { backgroundColor: '#9ca3af', color: 'white' }
-                              : booking.status === 'pending'
+                              : bookingInfo.booking.status === 'pending'
                               ? { backgroundColor: '#22c55e', color: 'white' }
-                              : booking.status === 'cancelled'
+                              : bookingInfo.booking.status === 'cancelled'
                               ? { backgroundColor: '#ef4444', color: 'white' }
-                              : calendarStyles.bookingConfirmed),
+                              : { backgroundColor: '#3b82f6', color: 'white' }),
                             cursor: 'pointer',
                             transition: 'all 0.2s ease',
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            height: `calc(${bookingInfo.slotsSpanned * 40}px - 2px)`,
+                            zIndex: 10,
+                            padding: '6px 8px',
+                            borderRadius: '4px',
+                            margin: '2px',
                           }}
-                          onClick={() => handleBookingClick(booking)}
+                          onClick={() => handleBookingClick(bookingInfo.booking)}
                           onMouseOver={(e) => {
-                            e.target.style.transform = 'scale(1.02)'
-                            e.target.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)'
+                            e.currentTarget.style.transform = 'scale(1.02)'
+                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)'
                           }}
                           onMouseOut={(e) => {
-                            e.target.style.transform = 'scale(1)'
-                            e.target.style.boxShadow = 'none'
+                            e.currentTarget.style.transform = 'scale(1)'
+                            e.currentTarget.style.boxShadow = 'none'
                           }}
                           title="Click to view booking details"
                         >
@@ -866,7 +989,7 @@ const BookingCalendar = () => {
                               lineHeight: '1.2',
                             }}
                           >
-                            {booking.service}
+                            {bookingInfo.booking.service}
                           </div>
                           <div
                             style={{
@@ -876,21 +999,30 @@ const BookingCalendar = () => {
                               whiteSpace: 'nowrap',
                               lineHeight: '1.2',
                               opacity: 0.9,
+                              marginTop: '2px',
                             }}
                           >
-                            {booking.client}
+                            {bookingInfo.booking.client}
                           </div>
-                          {booking.numClients > 1 && (
-                            <div style={{ fontSize: '9px', opacity: 0.8 }}>
-                              ({booking.numClients} clients)
+                          {bookingInfo.booking.numClients > 1 && (
+                            <div style={{ fontSize: '9px', opacity: 0.8, marginTop: '2px' }}>
+                              ({bookingInfo.booking.numClients} clients)
                             </div>
                           )}
+                          <div style={{ fontSize: '9px', opacity: 0.8, marginTop: '2px' }}>
+                            {bookingInfo.booking.time} - {bookingInfo.booking.endTime}
+                          </div>
                         </div>
                       ) : (
                         <div
-                          style={calendarStyles.availableSlot}
-                          onMouseOver={(e) => (e.target.style.backgroundColor = '#f8f9fa')}
-                          onMouseOut={(e) => (e.target.style.backgroundColor = 'transparent')}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            height: '40px',
+                            color: '#d1d5db',
+                            fontSize: '12px',
+                          }}
                         >
                           -
                         </div>
@@ -901,24 +1033,23 @@ const BookingCalendar = () => {
               </div>
             </div>
           ))}
-        </div>
 
-        {/* Day Summary */}
-        <div style={calendarStyles.summaryGrid}>
-          <div style={{ ...calendarStyles.summaryCard, ...calendarStyles.summaryCardBlue }}>
-            <div style={calendarStyles.summaryLabel}>📅 Total Bookings</div>
-            <div style={calendarStyles.summaryValue}>{dayBookings.length}</div>
-          </div>
-          <div style={{ ...calendarStyles.summaryCard, ...calendarStyles.summaryCardGreen }}>
-            <div style={calendarStyles.summaryLabel}>🕐 Total Clients</div>
-            <div style={calendarStyles.summaryValue}>
-              {dayBookings.reduce((sum, booking) => sum + (booking.numClients || 1), 0)}
-            </div>
-          </div>
-          <div style={{ ...calendarStyles.summaryCard, ...calendarStyles.summaryCardPurple }}>
-            <div style={calendarStyles.summaryLabel}>✂️ Services</div>
-            <div style={calendarStyles.summaryValue}>
-              {new Set(dayBookings.map((b) => b.service)).size}
+          {/* Day Summary */}
+          <div style={{ padding: '24px', backgroundColor: '#f9fafb' }}>
+            <div
+              style={{
+                backgroundColor: '#dbeafe',
+                padding: '16px',
+                borderRadius: '8px',
+                textAlign: 'center',
+              }}
+            >
+              <div style={{ fontSize: '14px', color: '#1e40af', marginBottom: '4px' }}>
+                📅 Total Bookings
+              </div>
+              <div style={{ fontSize: '32px', fontWeight: '700', color: '#1e3a8a' }}>
+                {dayBookings.length}
+              </div>
             </div>
           </div>
         </div>
@@ -1105,7 +1236,6 @@ const BookingCalendar = () => {
                               )}
                               {service.duration} min - $
                               {(() => {
-                                // Service prices are TEXT format (e.g., "20+", "POA", etc.)
                                 const regularPriceStr = service.regularPrice
                                   ? String(service.regularPrice)
                                   : '0'
@@ -1117,9 +1247,8 @@ const BookingCalendar = () => {
                                 const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
                                 const discountNum = parseFloat(discountStr.replace('+', ''))
 
-                                // Check if we got valid numbers
                                 if (isNaN(regularPriceNum)) {
-                                  return regularPriceStr // Return original text (e.g., "POA")
+                                  return regularPriceStr
                                 }
 
                                 const finalPrice =
