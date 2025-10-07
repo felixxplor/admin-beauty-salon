@@ -1,23 +1,21 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect } from 'react'
 import { getStaff } from '../services/apiStaff'
 import { getServices } from '../services/apiServices'
 import { useBookings } from '../features/bookings/useBookings'
 import Spinner from '../ui/Spinner'
-import Empty from '../ui/Empty'
 import { calendarStyles } from '../styles/CalendarStyles'
 import { createBooking } from '../services/apiBookings'
 import { getClient } from '../services/apiClients'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import supabase from '../services/supabase'
-import { useEffect } from 'react'
 
 // Custom hook to use the getStaff function
 const useStaff = () => {
-  const [staff, setStaff] = React.useState([])
-  const [isLoading, setIsLoading] = React.useState(true)
-  const [error, setError] = React.useState(null)
+  const [staff, setStaff] = useState([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  React.useEffect(() => {
+  useEffect(() => {
     const fetchStaff = async () => {
       try {
         setIsLoading(true)
@@ -31,7 +29,6 @@ const useStaff = () => {
         setIsLoading(false)
       }
     }
-
     fetchStaff()
   }, [])
 
@@ -40,11 +37,11 @@ const useStaff = () => {
 
 // Custom hook to use the getServices function
 const useServices = () => {
-  const [services, setServices] = React.useState([])
-  const [isLoading, setIsLoading] = React.useState(true)
-  const [error, setError] = React.useState(null)
+  const [services, setServices] = useState([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  React.useEffect(() => {
+  useEffect(() => {
     const fetchServices = async () => {
       try {
         setIsLoading(true)
@@ -58,7 +55,6 @@ const useServices = () => {
         setIsLoading(false)
       }
     }
-
     fetchServices()
   }, [])
 
@@ -67,11 +63,11 @@ const useServices = () => {
 
 // Custom hook to use the getClient function
 const useClients = () => {
-  const [clients, setClients] = React.useState([])
-  const [isLoading, setIsLoading] = React.useState(true)
-  const [error, setError] = React.useState(null)
+  const [clients, setClients] = useState([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  React.useEffect(() => {
+  useEffect(() => {
     const fetchClients = async () => {
       try {
         setIsLoading(true)
@@ -85,7 +81,6 @@ const useClients = () => {
         setIsLoading(false)
       }
     }
-
     fetchClients()
   }, [])
 
@@ -94,11 +89,11 @@ const useClients = () => {
 
 // Custom hook to fetch staff shifts
 const useStaffShifts = () => {
-  const [staffShifts, setStaffShifts] = React.useState([])
-  const [isLoading, setIsLoading] = React.useState(true)
-  const [error, setError] = React.useState(null)
+  const [staffShifts, setStaffShifts] = useState([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState(null)
 
-  React.useEffect(() => {
+  useEffect(() => {
     const fetchStaffShifts = async () => {
       try {
         setIsLoading(true)
@@ -117,7 +112,6 @@ const useStaffShifts = () => {
         setIsLoading(false)
       }
     }
-
     fetchStaffShifts()
   }, [])
 
@@ -172,45 +166,40 @@ const timeSlots = [
 const getStaffWorkingOnDay = (date, staff, staffShifts) => {
   if (!date || !staff || !staffShifts || staffShifts.length === 0) return staff
 
-  const dayOfWeek = new Date(date).getDay() // 0 = Sunday, 1 = Monday, etc.
+  const dayOfWeek = new Date(date).getDay()
 
-  // Get staff IDs that have shifts on this day
   const workingStaffIds = staffShifts
     .filter((shift) => shift.dayOfWeek === dayOfWeek)
     .map((shift) => shift.staffId)
 
-  // Return only staff members who are working on this day
   const workingStaff = staff.filter((s) => workingStaffIds.includes(s.id))
 
-  // If no staff found (maybe shifts not set up yet), return all staff
   return workingStaff.length > 0 ? workingStaff : staff
 }
 
 // Helper function to create a local date-time without timezone conversion
 const createLocalDateTime = (dateString, timeString) => {
-  // Parse the date string (YYYY-MM-DD)
   const [year, month, day] = dateString.split('-').map(Number)
-  // Parse the time string (HH:MM)
   const [hours, minutes] = timeString.split(':').map(Number)
-
-  // Create a new Date object with local time components
   const localDate = new Date(year, month - 1, day, hours, minutes, 0, 0)
-
   return localDate
 }
 
 // Helper function to format date for database (keeping local time)
 const formatDateForDatabase = (date) => {
-  // Format as ISO string but keep local time
   const year = date.getFullYear()
   const month = String(date.getMonth() + 1).padStart(2, '0')
   const day = String(date.getDate()).padStart(2, '0')
   const hours = String(date.getHours()).padStart(2, '0')
   const minutes = String(date.getMinutes()).padStart(2, '0')
   const seconds = String(date.getSeconds()).padStart(2, '0')
-
-  // Return in local time format that preserves the actual time
   return `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`
+}
+
+// Helper function to convert time to minutes
+const timeToMinutes = (timeStr) => {
+  const [hours, minutes] = timeStr.split(':').map(Number)
+  return hours * 60 + minutes
 }
 
 const BookingCalendar = () => {
@@ -218,11 +207,17 @@ const BookingCalendar = () => {
   const [searchParams, setSearchParams] = useSearchParams()
   const [currentDate, setCurrentDate] = useState(new Date())
   const [selectedDate, setSelectedDate] = useState(null)
-  const [view, setView] = useState('calendar') // 'calendar' or 'day'
+  const [view, setView] = useState('calendar')
   const [hoveredDay, setHoveredDay] = useState(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
   const [serviceSearchTerm, setServiceSearchTerm] = useState('')
+
+  // Drag and drop state
+  const [draggedBooking, setDraggedBooking] = useState(null)
+  const [dragTarget, setDragTarget] = useState(null)
+  const [isDragging, setIsDragging] = useState(false)
+
   const [createFormData, setCreateFormData] = useState({
     clientId: '',
     name: '',
@@ -233,6 +228,8 @@ const BookingCalendar = () => {
     numClients: 1,
     notes: '',
     status: 'pending',
+    serviceStaffAssignments: {},
+    createSeparateBookings: false,
   })
 
   useEffect(() => {
@@ -242,10 +239,25 @@ const BookingCalendar = () => {
     if (dateParam && viewParam === 'day') {
       setSelectedDate(dateParam)
       setView('day')
-      // Clean up URL params after applying them
       setSearchParams({})
     }
   }, [searchParams, setSearchParams])
+
+  const hasMultipleStaffAssigned = () => {
+    const assignments = Object.values(createFormData.serviceStaffAssignments)
+    const uniqueStaff = new Set(assignments.filter((id) => id))
+    return uniqueStaff.size > 1
+  }
+
+  const handleServiceStaffAssignment = (serviceId, staffId) => {
+    setCreateFormData((prev) => ({
+      ...prev,
+      serviceStaffAssignments: {
+        ...prev.serviceStaffAssignments,
+        [serviceId]: staffId,
+      },
+    }))
+  }
 
   const { bookings, isLoading, refetch } = useBookings()
   const { staff, isLoading: staffLoading, error: staffError } = useStaff()
@@ -253,10 +265,132 @@ const BookingCalendar = () => {
   const { clients, isLoading: clientsLoading, error: clientsError } = useClients()
   const { staffShifts, isLoading: staffShiftsLoading, error: staffShiftsError } = useStaffShifts()
 
+  // Drag and drop handlers
+  const handleDragStart = (e, booking, staff, time) => {
+    setDraggedBooking({
+      booking,
+      originalStaff: staff,
+      originalTime: time,
+    })
+    setIsDragging(true)
+    e.dataTransfer.effectAllowed = 'move'
+    e.currentTarget.style.opacity = '0.5'
+    e.currentTarget.style.cursor = 'grabbing'
+  }
+
+  const handleDragEnd = (e) => {
+    e.currentTarget.style.opacity = '1'
+    e.currentTarget.style.cursor = 'grab'
+    setDraggedBooking(null)
+    setDragTarget(null)
+    setIsDragging(false)
+  }
+
+  const handleDragOver = (e) => {
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+  }
+
+  const handleDragEnter = (e, staff, time) => {
+    e.preventDefault()
+    if (draggedBooking) {
+      setDragTarget({ staff, time })
+    }
+  }
+
+  const handleDragLeave = (e) => {
+    if (e.currentTarget === e.target) {
+      setDragTarget(null)
+    }
+  }
+
+  const checkBookingConflict = (
+    targetStaff,
+    targetTime,
+    duration,
+    currentBookingId,
+    dayBookings
+  ) => {
+    const startMinutes = timeToMinutes(targetTime)
+    const endMinutes = startMinutes + duration
+
+    const conflicts = dayBookings.filter((booking) => {
+      if (booking.id === currentBookingId) return false
+      if (booking.staffId !== targetStaff.id) return false
+
+      const bookingStart = timeToMinutes(booking.time)
+      const bookingEnd = timeToMinutes(booking.endTime)
+
+      return startMinutes < bookingEnd && endMinutes > bookingStart
+    })
+
+    return conflicts.length > 0
+  }
+
+  const handleDrop = async (e, targetStaff, targetTime) => {
+    e.preventDefault()
+
+    if (!draggedBooking) return
+
+    const { booking, originalStaff, originalTime } = draggedBooking
+
+    const staffChanged = targetStaff.id !== originalStaff.id
+    const timeChanged = targetTime !== originalTime
+
+    if (!staffChanged && !timeChanged) {
+      setDraggedBooking(null)
+      setDragTarget(null)
+      setIsDragging(false)
+      return
+    }
+
+    const dayBookings = bookingsByDate[selectedDate] || []
+
+    // Check for conflicts
+    if (checkBookingConflict(targetStaff, targetTime, booking.duration, booking.id, dayBookings)) {
+      alert('⚠️ This time slot conflicts with another booking for this staff member!')
+      setDraggedBooking(null)
+      setDragTarget(null)
+      setIsDragging(false)
+      return
+    }
+
+    try {
+      const newStartDateTime = createLocalDateTime(selectedDate, targetTime)
+      const duration = booking.duration || 60
+      const newEndDateTime = new Date(newStartDateTime.getTime() + duration * 60000)
+
+      const formattedStartTime = formatDateForDatabase(newStartDateTime)
+      const formattedEndTime = formatDateForDatabase(newEndDateTime)
+
+      const { error } = await supabase
+        .from('bookings')
+        .update({
+          staffId: targetStaff.id,
+          startTime: formattedStartTime,
+          endTime: formattedEndTime,
+        })
+        .eq('id', booking.id)
+
+      if (error) throw error
+
+      const staffName = targetStaff.name || 'staff member'
+      alert(`✓ Booking moved to ${staffName} at ${targetTime}`)
+
+      if (refetch) await refetch()
+    } catch (error) {
+      console.error('Error updating booking:', error)
+      alert('❌ Failed to move booking. Please try again.')
+    } finally {
+      setDraggedBooking(null)
+      setDragTarget(null)
+      setIsDragging(false)
+    }
+  }
+
   // Filter services based on search term
   const filteredServices = useMemo(() => {
     if (!services) return []
-
     if (!serviceSearchTerm.trim()) return services
 
     const searchLower = serviceSearchTerm.toLowerCase()
@@ -283,26 +417,21 @@ const BookingCalendar = () => {
       0
     )
 
-    // Handle "+" suffix in prices (prices are stored as text like "20+")
     let totalPriceNum = 0
     let hasPlus = false
     let hasNonNumeric = false
 
     selectedServices.forEach((service) => {
-      // regularPrice and discount are TEXT fields that may contain "+", "POA", etc.
       const regularPriceStr = service.regularPrice ? String(service.regularPrice) : '0'
       const discountStr = service.discount ? String(service.discount) : '0'
 
-      // Check if any price has "+" suffix
       if (regularPriceStr.includes('+')) {
         hasPlus = true
       }
 
-      // Extract numeric values by removing "+"
       const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
       const discountNum = parseFloat(discountStr.replace('+', ''))
 
-      // Check if parsing resulted in valid numbers
       if (isNaN(regularPriceNum) || isNaN(discountNum)) {
         hasNonNumeric = true
       } else {
@@ -310,10 +439,9 @@ const BookingCalendar = () => {
       }
     })
 
-    // Return total price as text with "+" if any service had it
     let totalPrice
     if (hasNonNumeric) {
-      totalPrice = 'POA' // Price on application
+      totalPrice = 'POA'
     } else if (hasPlus) {
       totalPrice = `${totalPriceNum}+`
     } else {
@@ -339,27 +467,21 @@ const BookingCalendar = () => {
 
   // Transform your booking data to include date and time information
   const transformedBookings = useMemo(() => {
-    // Wait for both bookings and staff data to be loaded before transforming
     if (!bookings || bookings.length === 0 || staff.length === 0) return []
 
     return bookings.map((booking) => {
-      // Handle both ISO string and Date object formats, with null checks
       let startTime, endTime
 
-      // Handle startTime - FIXED to avoid timezone conversion issues
       if (booking.startTime) {
         if (typeof booking.startTime === 'string') {
-          // If it's a string, parse it carefully to avoid timezone issues
           startTime = new Date(booking.startTime)
         } else {
           startTime = booking.startTime
         }
       } else {
-        // If no startTime, create a default date
         startTime = new Date()
       }
 
-      // Handle endTime with null check
       if (booking.endTime) {
         if (typeof booking.endTime === 'string') {
           endTime = new Date(booking.endTime)
@@ -367,11 +489,9 @@ const BookingCalendar = () => {
           endTime = booking.endTime
         }
       } else {
-        // If no endTime, calculate from startTime + 60 minutes as default
         endTime = new Date(startTime.getTime() + 60 * 60000)
       }
 
-      // Validate that dates are valid
       if (isNaN(startTime.getTime())) {
         console.warn('Invalid startTime for booking:', booking.id, booking.startTime)
         startTime = new Date()
@@ -382,8 +502,6 @@ const BookingCalendar = () => {
         endTime = new Date(startTime.getTime() + 60 * 60000)
       }
 
-      // FIXED: Extract time in local timezone to avoid conversion issues
-      // Get local time components to avoid timezone conversion
       const localStartHours = startTime.getHours()
       const localStartMinutes = startTime.getMinutes()
       const localEndHours = endTime.getHours()
@@ -393,28 +511,20 @@ const BookingCalendar = () => {
         return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
       }
 
-      // Properly resolve staff member from staffId
       let staffMember = 'Any'
       if (booking.staffId && staff.length > 0) {
         const foundStaff = staff.find((s) => s.id === booking.staffId)
         if (foundStaff) {
           staffMember = foundStaff.name || foundStaff.id
         }
-        // If staffId exists but no matching staff found, default to 'Any'
       }
-      // If no staffId specified, it defaults to 'Any'
 
-      // Handle multiple services display
       let serviceDisplay = 'Service'
       if (Array.isArray(booking.services)) {
-        // Multiple services returned from the query
         serviceDisplay = booking.services.map((s) => s.name).join(', ')
       } else if (booking.services?.name) {
-        // Single service object
         serviceDisplay = booking.services.name
       } else if (booking.serviceIds) {
-        // If we have serviceIds array but no services data, we'll need to fetch service names
-        // For now, show a generic message indicating multiple services
         try {
           const serviceIdsArray = Array.isArray(booking.serviceIds)
             ? booking.serviceIds
@@ -428,7 +538,7 @@ const BookingCalendar = () => {
 
       const transformedBooking = {
         id: booking.id,
-        originalBooking: booking, // Keep reference to original booking data
+        originalBooking: booking,
         service: serviceDisplay,
         client: booking.client?.fullName || booking.client?.email || booking.name || booking.phone,
         date:
@@ -439,10 +549,10 @@ const BookingCalendar = () => {
             const day = String(startTime.getDate()).padStart(2, '0')
             return `${year}-${month}-${day}`
           })(),
-        time: formatTime(localStartHours, localStartMinutes), // Use local time
-        endTime: formatTime(localEndHours, localEndMinutes), // Use local time
+        time: formatTime(localStartHours, localStartMinutes),
+        endTime: formatTime(localEndHours, localEndMinutes),
         staff: staffMember,
-        staffId: booking.staffId, // Keep the original staffId for reference
+        staffId: booking.staffId,
         status: booking.status || 'pending',
         amount: booking.totalPrice || 0,
         numClients: booking.numClients || 1,
@@ -478,18 +588,28 @@ const BookingCalendar = () => {
   }, [transformedBookings, currentDate])
 
   const handleServiceSelection = (serviceId) => {
-    setCreateFormData((prev) => ({
-      ...prev,
-      selectedServiceIds: prev.selectedServiceIds.includes(serviceId)
+    setCreateFormData((prev) => {
+      const isSelected = prev.selectedServiceIds.includes(serviceId)
+      const newSelectedIds = isSelected
         ? prev.selectedServiceIds.filter((id) => id !== serviceId)
-        : [...prev.selectedServiceIds, serviceId],
-    }))
+        : [...prev.selectedServiceIds, serviceId]
+
+      const newAssignments = { ...prev.serviceStaffAssignments }
+      if (isSelected) {
+        delete newAssignments[serviceId]
+      }
+
+      return {
+        ...prev,
+        selectedServiceIds: newSelectedIds,
+        serviceStaffAssignments: newAssignments,
+        createSeparateBookings: newSelectedIds.length > 1,
+      }
+    })
   }
 
-  // Handler for when client is selected from dropdown
   const handleClientSelection = (clientId) => {
     if (clientId) {
-      // Clear name and phone when client is selected
       setCreateFormData((prev) => ({
         ...prev,
         clientId: clientId,
@@ -504,29 +624,37 @@ const BookingCalendar = () => {
     }
   }
 
-  // Handler for when name or phone is entered
   const handleNameOrPhoneChange = (field, value) => {
     setCreateFormData((prev) => ({
       ...prev,
       [field]: value,
-      // Clear client selection if name or phone is being entered
       clientId: value.trim() ? '' : prev.clientId,
     }))
   }
 
   const handleBookingClick = (booking) => {
-    navigate(`/bookings/${booking.id}?returnDate=${selectedDate}`)
+    if (!isDragging) {
+      navigate(`/bookings/${booking.id}?returnDate=${selectedDate}`)
+    }
   }
 
-  // Function to close modal and reset
   const closeModal = () => {
     setShowCreateModal(false)
     setServiceSearchTerm('')
   }
 
-  // Function to get booking info for rendering - only returns booking at its START time
   const getBookingInfo = (staffMember, timeSlot, date, dayBookings) => {
+    const roundToNearestSlot = (timeStr) => {
+      const [hours, minutes] = timeStr.split(':').map(Number)
+      const totalMinutes = hours * 60 + minutes
+      const roundedMinutes = Math.floor(totalMinutes / 15) * 15
+      const roundedHours = Math.floor(roundedMinutes / 60)
+      const remainingMinutes = roundedMinutes % 60
+      return `${String(roundedHours).padStart(2, '0')}:${String(remainingMinutes).padStart(2, '0')}`
+    }
+
     const booking = dayBookings.find((booking) => {
+      const bookingSlot = roundToNearestSlot(booking.time)
       const bookingStaffId = parseInt(booking.staffId)
       const staffMemberId = parseInt(staffMember.id)
 
@@ -537,17 +665,10 @@ const BookingCalendar = () => {
         staffMatch = bookingStaffId === staffMemberId
       }
 
-      // Check if this time slot is the START of the booking
-      return staffMatch && booking.time === timeSlot
+      return staffMatch && bookingSlot === timeSlot
     })
 
     if (!booking) return null
-
-    // Calculate how many 15-minute slots this booking spans
-    const timeToMinutes = (timeStr) => {
-      const [hours, minutes] = timeStr.split(':').map(Number)
-      return hours * 60 + minutes
-    }
 
     const startMinutes = timeToMinutes(booking.time)
     const endMinutes = timeToMinutes(booking.endTime)
@@ -577,47 +698,105 @@ const BookingCalendar = () => {
         return
       }
 
-      const startDateTime = createLocalDateTime(selectedDate, createFormData.startTime)
-      const endDateTime = new Date(
-        startDateTime.getTime() + selectedServicesInfo.totalDuration * 60000
-      )
+      if (createFormData.createSeparateBookings && createFormData.selectedServiceIds.length > 1) {
+        const unassignedServices = createFormData.selectedServiceIds.filter(
+          (serviceId) => !createFormData.serviceStaffAssignments[serviceId]
+        )
 
-      const formattedStartTime = formatDateForDatabase(startDateTime)
-      const formattedEndTime = formatDateForDatabase(endDateTime)
+        if (unassignedServices.length > 0) {
+          alert('Please assign a staff member to each service')
+          setIsCreating(false)
+          return
+        }
 
-      // Keep the price as-is (with "+" if present) since it's stored as TEXT in database
-      const priceValue = selectedServicesInfo.totalPrice
+        let currentStartTime = createFormData.startTime
 
-      const bookingData = {
-        date: selectedDate,
-        startTime: formattedStartTime,
-        endTime: formattedEndTime,
-        numClients: parseInt(createFormData.numClients),
-        price: priceValue,
-        totalPrice: priceValue,
-        status: createFormData.status,
-        notes: createFormData.notes,
-        serviceIds: createFormData.selectedServiceIds.map((id) => parseInt(id)),
-        serviceId:
-          createFormData.selectedServiceIds.length === 1
-            ? parseInt(createFormData.selectedServiceIds[0])
-            : null,
-        isPaid: false,
-        extrasPrice: 0,
-        staffId: createFormData.staffId ? parseInt(createFormData.staffId) : null,
-      }
+        for (const serviceId of createFormData.selectedServiceIds) {
+          const service = services.find((s) => s.id.toString() === serviceId)
+          const staffId = createFormData.serviceStaffAssignments[serviceId]
 
-      if (createFormData.clientId) {
-        bookingData.clientId = parseInt(createFormData.clientId)
+          const startDateTime = createLocalDateTime(selectedDate, currentStartTime)
+          const endDateTime = new Date(startDateTime.getTime() + service.duration * 60000)
+
+          const formattedStartTime = formatDateForDatabase(startDateTime)
+          const formattedEndTime = formatDateForDatabase(endDateTime)
+
+          const regularPriceStr = service.regularPrice ? String(service.regularPrice) : '0'
+          const discountStr = service.discount ? String(service.discount) : '0'
+          const hasPlus = regularPriceStr.includes('+')
+          const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
+          const discountNum = parseFloat(discountStr.replace('+', ''))
+          const priceValue = hasPlus
+            ? `${regularPriceNum - discountNum}+`
+            : `${regularPriceNum - discountNum}`
+
+          const bookingData = {
+            date: selectedDate,
+            startTime: formattedStartTime,
+            endTime: formattedEndTime,
+            numClients: parseInt(createFormData.numClients),
+            price: priceValue,
+            totalPrice: priceValue,
+            status: createFormData.status,
+            notes: createFormData.notes,
+            serviceIds: [parseInt(serviceId)],
+            serviceId: parseInt(serviceId),
+            isPaid: false,
+            extrasPrice: 0,
+            staffId: parseInt(staffId),
+          }
+
+          if (createFormData.clientId) {
+            bookingData.clientId = parseInt(createFormData.clientId)
+          } else {
+            bookingData.name = createFormData.name || null
+            bookingData.phone = createFormData.phone
+          }
+
+          await createBooking(bookingData)
+
+          currentStartTime = calculateEndTime(currentStartTime, service.duration)
+        }
       } else {
-        bookingData.name = createFormData.name || null
-        bookingData.phone = createFormData.phone
+        const startDateTime = createLocalDateTime(selectedDate, createFormData.startTime)
+        const endDateTime = new Date(
+          startDateTime.getTime() + selectedServicesInfo.totalDuration * 60000
+        )
+
+        const formattedStartTime = formatDateForDatabase(startDateTime)
+        const formattedEndTime = formatDateForDatabase(endDateTime)
+
+        const priceValue = selectedServicesInfo.totalPrice
+
+        const bookingData = {
+          date: selectedDate,
+          startTime: formattedStartTime,
+          endTime: formattedEndTime,
+          numClients: parseInt(createFormData.numClients),
+          price: priceValue,
+          totalPrice: priceValue,
+          status: createFormData.status,
+          notes: createFormData.notes,
+          serviceIds: createFormData.selectedServiceIds.map((id) => parseInt(id)),
+          serviceId:
+            createFormData.selectedServiceIds.length === 1
+              ? parseInt(createFormData.selectedServiceIds[0])
+              : null,
+          isPaid: false,
+          extrasPrice: 0,
+          staffId: createFormData.staffId ? parseInt(createFormData.staffId) : null,
+        }
+
+        if (createFormData.clientId) {
+          bookingData.clientId = parseInt(createFormData.clientId)
+        } else {
+          bookingData.name = createFormData.name || null
+          bookingData.phone = createFormData.phone
+        }
+
+        await createBooking(bookingData)
       }
 
-      // Create the booking
-      await createBooking(bookingData)
-
-      // Close the modal and reset form
       closeModal()
       setCreateFormData({
         clientId: '',
@@ -629,12 +808,12 @@ const BookingCalendar = () => {
         numClients: 1,
         notes: '',
         status: 'pending',
+        serviceStaffAssignments: {},
+        createSeparateBookings: false,
       })
 
-      // Ensure day view is maintained
       setSearchParams({ date: selectedDate, view: 'day' })
 
-      // Refresh bookings data to show the new booking
       if (refetch) {
         await refetch()
       }
@@ -693,12 +872,10 @@ const BookingCalendar = () => {
 
     const days = []
 
-    // Add empty cells for days before month starts
     for (let i = 0; i < startingDayOfWeek; i++) {
       days.push(null)
     }
 
-    // Add days of the month
     for (let day = 1; day <= daysInMonth; day++) {
       days.push(day)
     }
@@ -732,7 +909,6 @@ const BookingCalendar = () => {
     const dayBookings = bookingsByDate[selectedDate] || []
     const workingStaff = getStaffWorkingOnDay(selectedDate, staff, staffShifts)
     const staffGridColumns = workingStaff.map(() => '120px').join(' ')
-    const staffHeaderGridColumns = `repeat(${workingStaff.length}, 120px)`
 
     return (
       <div
@@ -763,18 +939,16 @@ const BookingCalendar = () => {
             zIndex: 100,
           }}
         >
-          {/* Wrapper for centering content */}
           <div
             style={{
               width: '100%',
               maxWidth: '1400px',
               display: 'grid',
-              gridTemplateColumns: '1fr auto 1fr', // Three equal columns
+              gridTemplateColumns: '1fr auto 1fr',
               alignItems: 'center',
               gap: '16px',
             }}
           >
-            {/* Left side - Back button */}
             <div
               style={{
                 display: 'flex',
@@ -801,7 +975,6 @@ const BookingCalendar = () => {
               </button>
             </div>
 
-            {/* Center - Title */}
             <h1
               style={{
                 fontSize: '20px',
@@ -820,7 +993,6 @@ const BookingCalendar = () => {
               })}
             </h1>
 
-            {/* Right side - Create button and total */}
             <div
               style={{
                 display: 'flex',
@@ -853,6 +1025,23 @@ const BookingCalendar = () => {
           </div>
         </div>
 
+        {/* Drag Instruction Banner */}
+        {isDragging && (
+          <div
+            style={{
+              padding: '8px 16px',
+              backgroundColor: '#dbeafe',
+              color: '#1e40af',
+              textAlign: 'center',
+              fontSize: '13px',
+              fontWeight: '500',
+              borderBottom: '1px solid #93c5fd',
+            }}
+          >
+            🖱️ Drag to a different time slot or staff member to reschedule the booking
+          </div>
+        )}
+
         {/* Scrollable Content Area */}
         <div
           style={{
@@ -871,7 +1060,7 @@ const BookingCalendar = () => {
               padding: '24px',
               width: 'fit-content',
               maxWidth: '1400px',
-              minHeight: '100%', // Add this to ensure container is at least full height
+              minHeight: '100%',
             }}
           >
             {/* Time/Staff Header - STICKY */}
@@ -938,7 +1127,7 @@ const BookingCalendar = () => {
                 key={timeSlot}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: `100px ${staffGridColumns}`, // Changed from '100px 1fr'
+                  gridTemplateColumns: `100px ${staffGridColumns}`,
                   borderBottom: '1px solid #e5e7eb',
                   minHeight: '40px',
                   width: 'fit-content',
@@ -966,18 +1155,31 @@ const BookingCalendar = () => {
                     dayBookings
                   )
 
+                  const isDropTarget =
+                    dragTarget?.staff?.id === staffMember.id && dragTarget?.time === timeSlot
+
                   return (
                     <div
                       key={`${staffMember.id}-${timeSlot}`}
                       style={{
                         position: 'relative',
                         borderRight: '1px solid #e5e7eb',
-                        backgroundColor: 'white',
+                        backgroundColor: isDropTarget ? '#dbeafe' : 'white',
                         minHeight: '40px',
+                        transition: 'background-color 0.2s ease',
                       }}
+                      onDragOver={handleDragOver}
+                      onDragEnter={(e) => handleDragEnter(e, staffMember, timeSlot)}
+                      onDragLeave={handleDragLeave}
+                      onDrop={(e) => handleDrop(e, staffMember, timeSlot)}
                     >
                       {bookingInfo ? (
                         <div
+                          draggable="true"
+                          onDragStart={(e) =>
+                            handleDragStart(e, bookingInfo.booking, staffMember, timeSlot)
+                          }
+                          onDragEnd={handleDragEnd}
                           style={{
                             ...(bookingInfo.booking.status === 'completed'
                               ? { backgroundColor: '#9ca3af', color: 'white' }
@@ -986,7 +1188,7 @@ const BookingCalendar = () => {
                               : bookingInfo.booking.status === 'cancelled'
                               ? { backgroundColor: '#ef4444', color: 'white' }
                               : { backgroundColor: '#3b82f6', color: 'white' }),
-                            cursor: 'pointer',
+                            cursor: 'grab',
                             transition: 'all 0.2s ease',
                             position: 'absolute',
                             top: 0,
@@ -1000,14 +1202,16 @@ const BookingCalendar = () => {
                           }}
                           onClick={() => handleBookingClick(bookingInfo.booking)}
                           onMouseOver={(e) => {
-                            e.currentTarget.style.transform = 'scale(1.02)'
-                            e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)'
+                            if (!isDragging) {
+                              e.currentTarget.style.transform = 'scale(1.02)'
+                              e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)'
+                            }
                           }}
                           onMouseOut={(e) => {
                             e.currentTarget.style.transform = 'scale(1)'
                             e.currentTarget.style.boxShadow = 'none'
                           }}
-                          title="Click to view booking details"
+                          title="Drag to reschedule or click to view details"
                         >
                           <div
                             style={{
@@ -1174,7 +1378,6 @@ const BookingCalendar = () => {
                   </div>
                 </div>
 
-                {/* Help text */}
                 <div
                   style={{
                     fontSize: '12px',
@@ -1193,7 +1396,6 @@ const BookingCalendar = () => {
                 <div style={calendarStyles.formGroup}>
                   <label style={calendarStyles.label}>Services (Select Multiple)</label>
 
-                  {/* Search Box */}
                   <input
                     type="text"
                     placeholder="🔍 Search services by name or category..."
@@ -1209,7 +1411,6 @@ const BookingCalendar = () => {
                     }}
                   />
 
-                  {/* Service List */}
                   <div
                     style={{
                       border: '1px solid #d1d5db',
@@ -1315,7 +1516,6 @@ const BookingCalendar = () => {
                     )}
                   </div>
 
-                  {/* Clear search button */}
                   {serviceSearchTerm && (
                     <button
                       type="button"
@@ -1354,6 +1554,143 @@ const BookingCalendar = () => {
                   )}
                 </div>
 
+                {/* Multiple Bookings Toggle */}
+                {createFormData.selectedServiceIds.length > 1 && (
+                  <div
+                    style={{
+                      ...calendarStyles.formGroup,
+                      backgroundColor: '#f0f9ff',
+                      padding: '12px',
+                      borderRadius: '6px',
+                      border: '1px solid #bfdbfe',
+                    }}
+                  >
+                    <label
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        cursor: 'pointer',
+                        fontSize: '14px',
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={createFormData.createSeparateBookings}
+                        onChange={(e) =>
+                          setCreateFormData((prev) => ({
+                            ...prev,
+                            createSeparateBookings: e.target.checked,
+                          }))
+                        }
+                        style={{ marginRight: '8px', width: '16px', height: '16px' }}
+                      />
+                      <span style={{ fontWeight: '600' }}>
+                        Create separate bookings for each service
+                      </span>
+                    </label>
+                    <div
+                      style={{
+                        fontSize: '12px',
+                        color: '#1e40af',
+                        marginTop: '6px',
+                        marginLeft: '24px',
+                      }}
+                    >
+                      {createFormData.createSeparateBookings
+                        ? '✓ Services will be scheduled consecutively with individual staff assignments'
+                        : 'All services will be combined in one booking'}
+                    </div>
+                  </div>
+                )}
+
+                {/* Staff Assignment Section */}
+                {createFormData.createSeparateBookings &&
+                createFormData.selectedServiceIds.length > 1 ? (
+                  <div style={calendarStyles.formGroup}>
+                    <label style={calendarStyles.label}>Assign Staff to Each Service *</label>
+                    <div
+                      style={{
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        padding: '12px',
+                        backgroundColor: 'white',
+                      }}
+                    >
+                      {createFormData.selectedServiceIds.map((serviceId, index) => {
+                        const service = services.find((s) => s.id.toString() === serviceId)
+                        if (!service) return null
+
+                        return (
+                          <div
+                            key={serviceId}
+                            style={{
+                              marginBottom:
+                                index < createFormData.selectedServiceIds.length - 1 ? '12px' : '0',
+                              paddingBottom:
+                                index < createFormData.selectedServiceIds.length - 1 ? '12px' : '0',
+                              borderBottom:
+                                index < createFormData.selectedServiceIds.length - 1
+                                  ? '1px solid #e5e7eb'
+                                  : 'none',
+                            }}
+                          >
+                            <div
+                              style={{
+                                fontSize: '13px',
+                                fontWeight: '600',
+                                marginBottom: '6px',
+                                color: '#374151',
+                              }}
+                            >
+                              {service.name} ({service.duration} min)
+                            </div>
+                            <select
+                              style={calendarStyles.select}
+                              value={createFormData.serviceStaffAssignments[serviceId] || ''}
+                              onChange={(e) =>
+                                handleServiceStaffAssignment(serviceId, e.target.value)
+                              }
+                              required
+                            >
+                              <option value="">Select staff member</option>
+                              {workingStaff.map((staffMember) => (
+                                <option key={staffMember.id} value={staffMember.id}>
+                                  {staffMember.name || staffMember.id}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+                      💡 Services will be scheduled back-to-back starting from the selected time
+                    </div>
+                  </div>
+                ) : (
+                  <div style={calendarStyles.formGroup}>
+                    <label style={calendarStyles.label}>Staff Member *</label>
+                    <select
+                      style={calendarStyles.select}
+                      value={createFormData.staffId}
+                      onChange={(e) => {
+                        setCreateFormData((prev) => ({ ...prev, staffId: e.target.value }))
+                      }}
+                      required
+                    >
+                      <option value="">Select staff member</option>
+                      {workingStaff.map((staffMember) => (
+                        <option key={staffMember.id} value={staffMember.id}>
+                          {staffMember.name || staffMember.id}
+                        </option>
+                      ))}
+                    </select>
+                    <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                      Only showing staff available on this day
+                    </div>
+                  </div>
+                )}
+
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div style={calendarStyles.formGroup}>
                     <label style={calendarStyles.label}>Start Time</label>
@@ -1385,29 +1722,6 @@ const BookingCalendar = () => {
                       )}
                       disabled
                     />
-                  </div>
-                </div>
-
-                <div style={calendarStyles.formGroup}>
-                  <label style={calendarStyles.label}>Staff Member *</label>
-                  <select
-                    style={calendarStyles.select}
-                    value={createFormData.staffId}
-                    onChange={(e) => {
-                      console.log('Staff selected:', e.target.value)
-                      setCreateFormData((prev) => ({ ...prev, staffId: e.target.value }))
-                    }}
-                    required
-                  >
-                    <option value="">Select staff member</option>
-                    {workingStaff.map((staffMember) => (
-                      <option key={staffMember.id} value={staffMember.id}>
-                        {staffMember.name || staffMember.id}
-                      </option>
-                    ))}
-                  </select>
-                  <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                    Only showing staff available on this day
                   </div>
                 </div>
 
@@ -1489,6 +1803,7 @@ const BookingCalendar = () => {
     )
   }
 
+  // Calendar View
   return (
     <div style={calendarStyles.container}>
       {/* Calendar Header */}
