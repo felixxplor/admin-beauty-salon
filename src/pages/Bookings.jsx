@@ -450,18 +450,6 @@ const BookingCalendar = () => {
         created_at: booking.created_at,
       }
 
-      if (startTime.getDate() === 4 && startTime.getMonth() === 9) {
-        // Oct 4th
-        console.log('Oct 4 booking:', {
-          id: booking.id,
-          rawDate: booking.date,
-          rawStartTime: booking.startTime,
-          parsedStartTime: startTime,
-          finalDate: booking.date || startTime.toISOString().split('T')[0],
-          client: booking.client?.fullName || booking.name,
-        })
-      }
-
       return transformedBooking
     })
   }, [bookings, staff])
@@ -749,45 +737,80 @@ const BookingCalendar = () => {
     return (
       <div
         style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
           width: '100%',
-          height: '100vh',
+          height: '100%',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          position: 'relative',
+          backgroundColor: 'white',
         }}
       >
-        {/* Day View Header - STICKY */}
+        {/* Day View Header */}
         <div
           style={{
             padding: '16px 24px',
             backgroundColor: 'white',
             boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
             display: 'flex',
-            justifyContent: 'space-between',
+            justifyContent: 'center',
             alignItems: 'center',
             flexShrink: 0,
             zIndex: 100,
           }}
         >
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <button
-              onClick={() => setView('calendar')}
+          {/* Wrapper for centering content */}
+          <div
+            style={{
+              width: '100%',
+              maxWidth: '1400px',
+              display: 'grid',
+              gridTemplateColumns: '1fr auto 1fr', // Three equal columns
+              alignItems: 'center',
+              gap: '16px',
+            }}
+          >
+            {/* Left side - Back button */}
+            <div
               style={{
-                padding: '8px 16px',
-                backgroundColor: 'transparent',
-                border: '1px solid #e5e7eb',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '14px',
-                color: '#2563eb',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '16px',
+                justifyContent: 'flex-start',
               }}
-              onMouseOver={(e) => (e.target.style.backgroundColor = '#f0f8ff')}
-              onMouseOut={(e) => (e.target.style.backgroundColor = 'transparent')}
             >
-              ← Back to Calendar
-            </button>
-            <h1 style={{ fontSize: '20px', fontWeight: '600', margin: 0 }}>
+              <button
+                onClick={() => setView('calendar')}
+                style={{
+                  padding: '8px 16px',
+                  backgroundColor: 'transparent',
+                  border: '1px solid #e5e7eb',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  color: '#2563eb',
+                }}
+                onMouseOver={(e) => (e.target.style.backgroundColor = '#f0f8ff')}
+                onMouseOut={(e) => (e.target.style.backgroundColor = 'transparent')}
+              >
+                ← Back to Calendar
+              </button>
+            </div>
+
+            {/* Center - Title */}
+            <h1
+              style={{
+                fontSize: '20px',
+                fontWeight: '600',
+                margin: 0,
+                textAlign: 'center',
+                whiteSpace: 'nowrap',
+              }}
+            >
               Bookings for{' '}
               {new Date(selectedDate).toLocaleDateString('en-US', {
                 weekday: 'long',
@@ -796,27 +819,36 @@ const BookingCalendar = () => {
                 day: 'numeric',
               })}
             </h1>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            <button
-              onClick={() => setShowCreateModal(true)}
+
+            {/* Right side - Create button and total */}
+            <div
               style={{
-                padding: '10px 20px',
-                backgroundColor: '#2563eb',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '14px',
-                fontWeight: '500',
-                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '16px',
+                justifyContent: 'flex-end',
               }}
-              onMouseOver={(e) => (e.target.style.backgroundColor = '#1d4ed8')}
-              onMouseOut={(e) => (e.target.style.backgroundColor = '#2563eb')}
             >
-              + Create Booking
-            </button>
-            <div style={{ fontSize: '14px', color: '#666' }}>
-              Total bookings: {dayBookings.length}
+              <button
+                onClick={() => setShowCreateModal(true)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#2563eb',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                }}
+                onMouseOver={(e) => (e.target.style.backgroundColor = '#1d4ed8')}
+                onMouseOut={(e) => (e.target.style.backgroundColor = '#2563eb')}
+              >
+                + Create Booking
+              </button>
+              <div style={{ fontSize: '14px', color: '#666' }}>
+                Total bookings: {dayBookings.length}
+              </div>
             </div>
           </div>
         </div>
@@ -825,43 +857,48 @@ const BookingCalendar = () => {
         <div
           style={{
             flex: 1,
-            overflowY: 'auto',
+            overflowY: 'scroll',
             overflowX: 'auto',
             position: 'relative',
             backgroundColor: '#f9fafb',
+            WebkitOverflowScrolling: 'touch',
+            display: 'flex',
+            justifyContent: 'center',
           }}
         >
-          {/* Time/Staff Header - STICKY */}
           <div
             style={{
-              position: 'sticky',
-              top: 0,
-              zIndex: 50,
-              backgroundColor: 'white',
-              borderBottom: '2px solid #e5e7eb',
-              display: 'grid',
-              gridTemplateColumns: '100px 1fr',
+              padding: '24px',
+              width: 'fit-content',
+              maxWidth: '1400px',
+              minHeight: '100%', // Add this to ensure container is at least full height
             }}
           >
+            {/* Time/Staff Header - STICKY */}
             <div
               style={{
-                padding: '12px 16px',
-                fontWeight: '600',
-                fontSize: '14px',
-                borderRight: '1px solid #e5e7eb',
-                display: 'flex',
-                alignItems: 'center',
-              }}
-            >
-              Time / Staff
-            </div>
-            <div
-              style={{
+                position: 'sticky',
+                top: 0,
+                zIndex: 50,
+                backgroundColor: 'white',
+                borderBottom: '2px solid #e5e7eb',
                 display: 'grid',
-                gridTemplateColumns: staffHeaderGridColumns,
-                gap: 0,
+                gridTemplateColumns: `100px ${staffGridColumns}`,
+                width: 'fit-content',
               }}
             >
+              <div
+                style={{
+                  padding: '12px 16px',
+                  fontWeight: '600',
+                  fontSize: '14px',
+                  borderRight: '1px solid #e5e7eb',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+              >
+                Time / Staff
+              </div>
               {workingStaff.map((staffMember) => {
                 const staffName =
                   typeof staffMember === 'string' ? staffMember : staffMember.name || staffMember.id
@@ -894,40 +931,33 @@ const BookingCalendar = () => {
                 )
               })}
             </div>
-          </div>
 
-          {/* Time Slots */}
-          {timeSlots.map((timeSlot) => (
-            <div
-              key={timeSlot}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '100px 1fr',
-                borderBottom: '1px solid #e5e7eb',
-                minHeight: '40px',
-              }}
-            >
+            {/* Time Slots */}
+            {timeSlots.map((timeSlot) => (
               <div
-                style={{
-                  padding: '8px 16px',
-                  fontSize: '13px',
-                  fontWeight: '500',
-                  color: '#666',
-                  borderRight: '1px solid #e5e7eb',
-                  backgroundColor: 'white',
-                  display: 'flex',
-                  alignItems: 'center',
-                }}
-              >
-                {timeSlot}
-              </div>
-              <div
+                key={timeSlot}
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: staffGridColumns,
-                  gap: 0,
+                  gridTemplateColumns: `100px ${staffGridColumns}`, // Changed from '100px 1fr'
+                  borderBottom: '1px solid #e5e7eb',
+                  minHeight: '40px',
+                  width: 'fit-content',
                 }}
               >
+                <div
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '13px',
+                    fontWeight: '500',
+                    color: '#666',
+                    borderRight: '1px solid #e5e7eb',
+                    backgroundColor: 'white',
+                    display: 'flex',
+                    alignItems: 'center',
+                  }}
+                >
+                  {timeSlot}
+                </div>
                 {workingStaff.map((staffMember) => {
                   const bookingInfo = getBookingInfo(
                     staffMember,
@@ -1031,8 +1061,8 @@ const BookingCalendar = () => {
                   )
                 })}
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
 
           {/* Day Summary */}
           <div style={{ padding: '24px', backgroundColor: '#f9fafb' }}>

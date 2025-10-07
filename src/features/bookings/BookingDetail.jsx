@@ -750,10 +750,15 @@ const BookingDetailPage = () => {
   }
 
   const handleDelete = async () => {
+    const returnDate = searchParams.get('returnDate')
     setIsDeleting(true)
     try {
       await deleteBooking(parseInt(bookingId))
-      navigate('/bookings')
+      if (returnDate) {
+        navigate(`/bookings?date=${returnDate}&view=day`)
+      } else {
+        navigate('/bookings')
+      }
     } catch (error) {
       console.error('Error deleting booking:', error)
       alert('Failed to delete booking. Please try again.')
