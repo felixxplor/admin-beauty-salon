@@ -7,6 +7,7 @@ import {
   HiOutlineHomeModern,
   HiOutlineUsers,
 } from 'react-icons/hi2'
+import { Calculator } from 'lucide-react'
 
 const NavList = styled.ul`
   display: flex;
@@ -61,6 +62,12 @@ function MainNav() {
           <StyledLink to="/dashboard">
             <HiOutlineHome />
             <span>Home</span>
+          </StyledLink>
+        </li>
+        <li>
+          <StyledLink to="/pos">
+            <Calculator />
+            <span>POS</span>
           </StyledLink>
         </li>
         <li>

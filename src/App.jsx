@@ -20,6 +20,7 @@ import ProtectedRoute from './ui/ProtectedRoute'
 import ClientsPage from './pages/Clients'
 import Services from './pages/Services'
 import BookingDetailPage from './pages/BookingDetail'
+import POSSystem from './pages/POS'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -48,6 +49,7 @@ function App() {
             >
               <Route index element={<Navigate replace to="dashboard" />} />
               <Route path="dashboard" element={<Dashboard />} />
+              <Route path="pos" element={<POSSystem />} />
               <Route path="bookings" element={<Bookings />} />
               <Route path="bookings/:bookingId" element={<Booking />} />
               <Route path="checkin/:bookingId" element={<Checkin />} />

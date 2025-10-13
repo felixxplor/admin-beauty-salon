@@ -61,10 +61,17 @@ function ServiceRow({ service }) {
     })
   }
 
+  // Handle price display
+  const displayPrice = isNaN(Number(regularPrice))
+    ? regularPrice.startsWith('$')
+      ? regularPrice
+      : `$${regularPrice}`
+    : formatCurrency(Number(regularPrice))
+
   return (
     <Table.Row>
       <Service>{name}</Service>
-      <Price>{formatCurrency(regularPrice)}</Price>
+      <Price>{displayPrice}</Price>
       <Duration>{duration} min</Duration>
       <Category>{category}</Category>
       <div>

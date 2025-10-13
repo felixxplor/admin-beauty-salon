@@ -177,6 +177,43 @@ const getStaffWorkingOnDay = (date, staff, staffShifts) => {
   return workingStaff.length > 0 ? workingStaff : staff
 }
 
+// Add this helper function near the top with other helper functions
+const getBookingColor = (booking, status) => {
+  // Count services
+  let serviceCount = 1 // default
+
+  if (Array.isArray(booking.originalBooking?.services)) {
+    serviceCount = booking.originalBooking.services.length
+  } else if (booking.originalBooking?.serviceIds) {
+    try {
+      const serviceIdsArray = Array.isArray(booking.originalBooking.serviceIds)
+        ? booking.originalBooking.serviceIds
+        : JSON.parse(booking.originalBooking.serviceIds)
+      serviceCount = serviceIdsArray.length
+    } catch (e) {
+      serviceCount = 1
+    }
+  }
+
+  // Status-based colors with service count variations
+  if (status === 'completed') {
+    return '#9ca3af' // Gray - keep same for completed
+  } else if (status === 'cancelled') {
+    return '#ef4444' // Red - keep same for cancelled
+  } else if (status === 'pending') {
+    // Different shades of green based on service count
+    if (serviceCount === 1) return '#22c55e' // Bright green
+    if (serviceCount === 2) return '#16a34a' // Medium green
+    return '#15803d' // Dark green for 3+
+  } else {
+    // confirmed or other
+    // Different shades of blue based on service count
+    if (serviceCount === 1) return '#3b82f6' // Bright blue
+    if (serviceCount === 2) return '#2563eb' // Medium blue
+    return '#1d4ed8' // Dark blue for 3+
+  }
+}
+
 // Helper function to create a local date-time without timezone conversion
 const createLocalDateTime = (dateString, timeString) => {
   const [year, month, day] = dateString.split('-').map(Number)
@@ -212,6 +249,7 @@ const BookingCalendar = () => {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
   const [serviceSearchTerm, setServiceSearchTerm] = useState('')
+  const [currentTime, setCurrentTime] = useState(new Date())
 
   // Drag and drop state
   const [draggedBooking, setDraggedBooking] = useState(null)
@@ -242,6 +280,15 @@ const BookingCalendar = () => {
       setSearchParams({})
     }
   }, [searchParams, setSearchParams])
+
+  // Update current time every minute
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date())
+    }, 60000) // Update every minute
+
+    return () => clearInterval(timer)
+  }, [])
 
   const hasMultipleStaffAssigned = () => {
     const assignments = Object.values(createFormData.serviceStaffAssignments)
@@ -638,6 +685,41 @@ const BookingCalendar = () => {
     }
   }
 
+  // Calculate current time position
+  const getCurrentTimePosition = () => {
+    const hours = currentTime.getHours()
+    const minutes = currentTime.getMinutes()
+    const currentTimeInMinutes = hours * 60 + minutes
+
+    // Calendar starts at 09:00 (540 minutes from midnight)
+    const startMinutes = 9 * 60
+
+    // If current time is before 09:00 or after 19:00, don't show the line
+    if (currentTimeInMinutes < startMinutes || currentTimeInMinutes >= 19 * 60) {
+      return null
+    }
+
+    // Calculate position relative to start time
+    const minutesFromStart = currentTimeInMinutes - startMinutes
+    // Each time slot is 40px high and represents 15 minutes
+    const pixelsPerMinute = 40 / 15
+    const position = minutesFromStart * pixelsPerMinute
+
+    return position
+  }
+
+  // Check if the selected date is today
+  const isSelectedDateToday = () => {
+    if (!selectedDate) return false
+    const today = new Date()
+    const selected = new Date(selectedDate)
+    return (
+      today.getFullYear() === selected.getFullYear() &&
+      today.getMonth() === selected.getMonth() &&
+      today.getDate() === selected.getDate()
+    )
+  }
+
   const closeModal = () => {
     setShowCreateModal(false)
     setServiceSearchTerm('')
@@ -909,6 +991,8 @@ const BookingCalendar = () => {
     const dayBookings = bookingsByDate[selectedDate] || []
     const workingStaff = getStaffWorkingOnDay(selectedDate, staff, staffShifts)
     const staffGridColumns = workingStaff.map(() => '120px').join(' ')
+    const currentTimePosition = getCurrentTimePosition()
+    const showCurrentTimeLine = isSelectedDateToday() && currentTimePosition !== null
 
     return (
       <div
@@ -1061,8 +1145,59 @@ const BookingCalendar = () => {
               width: 'fit-content',
               maxWidth: '1400px',
               minHeight: '100%',
+              position: 'relative',
             }}
           >
+            {/* Current Time Line */}
+            {showCurrentTimeLine && (
+              <div
+                style={{
+                  position: 'absolute',
+                  top: `${currentTimePosition + 52}px`, // 52px accounts for the sticky header
+                  left: 0,
+                  right: 0,
+                  height: '2px',
+                  backgroundColor: '#ef4444',
+                  zIndex: 40,
+                  pointerEvents: 'none',
+                  boxShadow: '0 0 4px rgba(239, 68, 68, 0.5)',
+                }}
+              >
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: '8px',
+                    top: '-10px',
+                    backgroundColor: '#ef4444',
+                    color: 'white',
+                    padding: '2px 8px',
+                    borderRadius: '4px',
+                    fontSize: '11px',
+                    fontWeight: '600',
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {currentTime.toLocaleTimeString('en-US', {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    hour12: false,
+                  })}
+                </div>
+                <div
+                  style={{
+                    position: 'absolute',
+                    left: 0,
+                    top: '-4px',
+                    width: '10px',
+                    height: '10px',
+                    backgroundColor: '#ef4444',
+                    borderRadius: '50%',
+                    border: '2px solid white',
+                  }}
+                />
+              </div>
+            )}
+
             {/* Time/Staff Header - STICKY */}
             <div
               style={{
@@ -1181,13 +1316,11 @@ const BookingCalendar = () => {
                           }
                           onDragEnd={handleDragEnd}
                           style={{
-                            ...(bookingInfo.booking.status === 'completed'
-                              ? { backgroundColor: '#9ca3af', color: 'white' }
-                              : bookingInfo.booking.status === 'pending'
-                              ? { backgroundColor: '#22c55e', color: 'white' }
-                              : bookingInfo.booking.status === 'cancelled'
-                              ? { backgroundColor: '#ef4444', color: 'white' }
-                              : { backgroundColor: '#3b82f6', color: 'white' }),
+                            backgroundColor: getBookingColor(
+                              bookingInfo.booking,
+                              bookingInfo.booking.status
+                            ),
+                            color: 'white',
                             cursor: 'grab',
                             transition: 'all 0.2s ease',
                             position: 'absolute',
@@ -1199,17 +1332,23 @@ const BookingCalendar = () => {
                             padding: '6px 8px',
                             borderRadius: '4px',
                             margin: '2px',
+                            boxShadow:
+                              '0 2px 4px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1)',
                           }}
                           onClick={() => handleBookingClick(bookingInfo.booking)}
                           onMouseOver={(e) => {
                             if (!isDragging) {
                               e.currentTarget.style.transform = 'scale(1.02)'
-                              e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)'
+                              // Keep the shadow, just enhance it slightly
+                              e.currentTarget.style.boxShadow =
+                                '0 4px 12px rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.15)'
                             }
                           }}
                           onMouseOut={(e) => {
                             e.currentTarget.style.transform = 'scale(1)'
-                            e.currentTarget.style.boxShadow = 'none'
+                            // Restore the original shadow (don't remove it)
+                            e.currentTarget.style.boxShadow =
+                              '0 2px 4px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1)'
                           }}
                           title="Drag to reschedule or click to view details"
                         >
