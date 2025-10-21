@@ -10,6 +10,7 @@ import {
   X,
   Search,
   Package,
+  Unplug,
 } from 'lucide-react'
 import { useServices } from '../features/services/useServices'
 import Spinner from '../ui/Spinner'
@@ -27,6 +28,7 @@ const POSSystem = () => {
   const [cashReceived, setCashReceived] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
+  const [serialPort, setSerialPort] = useState(null)
 
   if (isLoading) return <Spinner />
   if (!services || !services.length) return <Empty resourceName="services" />
@@ -77,7 +79,6 @@ const POSSystem = () => {
   }
 
   const subtotal = cart.reduce((sum, item) => {
-    // Use custom price for POA items, otherwise calculate normally
     let price
     if (item.isPOA && item.customPrice) {
       price = parseFloat(item.customPrice) || 0
@@ -88,24 +89,54 @@ const POSSystem = () => {
     }
     return sum + price * item.quantity
   }, 0)
-  const total = subtotal // No tax - prices already include tax
+  const total = subtotal
 
   const openCashDrawer = async () => {
     try {
-      const port = await navigator.serial.requestPort()
-      await port.open({ baudRate: 9600 })
+      let port = serialPort
+
+      // Only request port if we don't have one stored
+      if (!port) {
+        port = await navigator.serial.requestPort()
+        setSerialPort(port)
+      }
+
+      // Check if port is already open
+      if (!port.readable || !port.writable) {
+        await port.open({ baudRate: 9600 })
+      }
 
       const writer = port.writable.getWriter()
       const command = new Uint8Array([27, 112, 0, 25, 250])
 
       await writer.write(command)
       writer.releaseLock()
-      await port.close()
 
+      // Don't close the port - keep it open for reuse
       return { success: true }
     } catch (error) {
       console.error('Cash drawer error:', error)
+      // Reset port on error
+      setSerialPort(null)
       return { success: false, error: error.message }
+    }
+  }
+
+  const disconnectCashDrawer = async () => {
+    if (serialPort) {
+      try {
+        await serialPort.close()
+        setMessage({ type: 'success', text: 'Cash drawer disconnected successfully' })
+      } catch (error) {
+        console.error('Error closing port:', error)
+        setMessage({ type: 'error', text: 'Error disconnecting cash drawer' })
+      }
+      setSerialPort(null)
+
+      // Clear message after 2 seconds
+      setTimeout(() => {
+        setMessage({ type: '', text: '' })
+      }, 2000)
     }
   }
 
@@ -193,7 +224,6 @@ const POSSystem = () => {
     paymentMethod === 'cash' && cashReceived ? Math.max(0, parseFloat(cashReceived) - total) : 0
 
   const getServicePrice = (service) => {
-    // For POA items in cart, use custom price if set
     if (service.isPOA && service.customPrice) {
       return parseFloat(service.customPrice) || 0
     }
@@ -328,6 +358,28 @@ const POSSystem = () => {
       <div style={styles.cartPanel} className="cartPanel">
         <div style={styles.cartHeader}>
           <h2 style={styles.cartTitle}>Current Service</h2>
+          {serialPort && (
+            <button
+              onClick={disconnectCashDrawer}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '8px 12px',
+                backgroundColor: '#FEE2E2',
+                color: '#DC2626',
+                borderRadius: '8px',
+                fontSize: '13px',
+                fontWeight: '500',
+                transition: 'background-color 0.2s',
+              }}
+              onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#FECACA')}
+              onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#FEE2E2')}
+            >
+              <Unplug size={16} />
+              Disconnect Drawer
+            </button>
+          )}
         </div>
 
         {/* Cart Items */}
@@ -424,6 +476,27 @@ const POSSystem = () => {
             <button onClick={() => setShowPayment(true)} style={styles.checkoutButton}>
               Proceed to Payment
             </button>
+          </div>
+        )}
+
+        {/* Status Message (for disconnect feedback) */}
+        {message.text && !showPayment && (
+          <div
+            style={{
+              position: 'fixed',
+              bottom: '20px',
+              right: '20px',
+              padding: '12px 16px',
+              borderRadius: '8px',
+              backgroundColor: message.type === 'success' ? '#10B981' : '#EF4444',
+              color: 'white',
+              fontSize: '14px',
+              fontWeight: '500',
+              boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)',
+              zIndex: 1000,
+            }}
+          >
+            {message.text}
           </div>
         )}
       </div>
