@@ -990,7 +990,7 @@ const BookingCalendar = () => {
   if (view === 'day' && selectedDate) {
     const dayBookings = bookingsByDate[selectedDate] || []
     const workingStaff = getStaffWorkingOnDay(selectedDate, staff, staffShifts)
-    const staffGridColumns = workingStaff.map(() => '120px').join(' ')
+    const staffGridColumns = workingStaff.map(() => '160px').join(' ')
     const currentTimePosition = getCurrentTimePosition()
     const showCurrentTimeLine = isSelectedDateToday() && currentTimePosition !== null
 
@@ -1026,7 +1026,7 @@ const BookingCalendar = () => {
           <div
             style={{
               width: '100%',
-              maxWidth: '1400px',
+              maxWidth: '1600px',
               display: 'grid',
               gridTemplateColumns: '1fr auto 1fr',
               alignItems: 'center',
@@ -1143,7 +1143,7 @@ const BookingCalendar = () => {
             style={{
               padding: '24px',
               width: 'fit-content',
-              maxWidth: '1400px',
+              maxWidth: '1600px',
               minHeight: '100%',
               position: 'relative',
             }}

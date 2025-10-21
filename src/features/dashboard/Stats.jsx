@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { formatCurrency } from '../../utils/helpers'
 import Stat from './Stat'
 
@@ -6,6 +7,7 @@ import {
   HiOutlineBriefcase,
   HiOutlineCalendarDays,
   HiOutlineChartBar,
+  HiOutlineClock,
 } from 'react-icons/hi2'
 
 function Stats({ bookings, serviceCount }) {
@@ -40,6 +42,16 @@ function Stats({ bookings, serviceCount }) {
   // 2. Today's bookings (based on startTime)
   const todaysBookings = safeBookings.filter((booking) => isToday(booking.startTime)).length
 
+  // 2a. Today's PENDING bookings
+  const todaysPendingBookings = safeBookings.filter(
+    (booking) => isToday(booking.startTime) && booking.status === 'pending'
+  ).length
+
+  // 2b. Today's CONFIRMED bookings
+  const todaysConfirmedBookings = safeBookings.filter(
+    (booking) => isToday(booking.startTime) && booking.status === 'confirmed'
+  ).length
+
   // 3. Sales
   const sales = safeBookings.reduce((acc, cur) => acc + (cur.totalPrice || 0), 0)
 
@@ -48,42 +60,34 @@ function Stats({ bookings, serviceCount }) {
     .filter((booking) => isToday(booking.startTime))
     .reduce((acc, cur) => acc + (cur.totalPrice || 0), 0)
 
-  // 5. Commented out stats for future implementation
-  // const checkins = confirmedStays.length
-
-  // 6. Occupancy rate calculation
-  // num checked in nights / all available nights (num days * num cabins)
-  // const occupation =
-  //   confirmedStays.reduce((acc, cur) => acc + cur.numNights, 0) / (numDays * cabinCount)
-
   return (
     <>
-      {/* <Stat title="Bookings" color="blue" icon={<HiOutlineBriefcase />} value={numBookings} /> */}
-      <Stat
-        title="Today's Bookings"
-        color="indigo"
-        icon={<HiOutlineCalendarDays />}
-        value={todaysBookings}
-      />
-      {/* <Stat
-        title="Sales"
-        color="green"
-        icon={<HiOutlineBanknotes />}
-        value={formatCurrency(sales)}
-      />
-      <Stat
-        title="Today's Sales"
-        color="yellow"
-        icon={<HiOutlineBanknotes />}
-        value={formatCurrency(todaysSales)}
-      /> */}
-      {/* <Stat title="Check ins" color="indigo" icon={<HiOutlineCalendarDays />} value={checkins} />
-      <Stat
-        title="Occupancy rate"
-        color="yellow"
-        icon={<HiOutlineChartBar />}
-        value={Math.round(occupation * 100) + '%'}
-      /> */}
+      <Link to="/pending-bookings">
+        <Stat
+          title="Today's Bookings"
+          color="indigo"
+          icon={<HiOutlineCalendarDays />}
+          value={todaysBookings}
+        />
+      </Link>
+
+      <Link to="/pending-bookings">
+        <Stat
+          title="Today's Pending"
+          color="yellow"
+          icon={<HiOutlineClock />}
+          value={todaysPendingBookings}
+        />
+      </Link>
+
+      <Link to="/pending-bookings">
+        <Stat
+          title="Today's Confirmed"
+          color="green"
+          icon={<HiOutlineBriefcase />}
+          value={todaysConfirmedBookings}
+        />
+      </Link>
     </>
   )
 }
