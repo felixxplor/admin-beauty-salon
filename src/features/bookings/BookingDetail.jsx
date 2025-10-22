@@ -891,7 +891,7 @@ const BookingDetailPage = () => {
               <div style={styles.overviewLabel}>Staff</div>
               <div style={styles.overviewValue}>
                 <span style={styles.serviceIcon}>👤</span>
-                {booking.staff.name}
+                {booking.staff?.name || 'Not assigned'}
               </div>
             </div>
 

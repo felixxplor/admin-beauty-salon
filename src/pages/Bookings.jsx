@@ -650,7 +650,7 @@ const BookingCalendar = () => {
         ...prev,
         selectedServiceIds: newSelectedIds,
         serviceStaffAssignments: newAssignments,
-        createSeparateBookings: newSelectedIds.length > 1,
+        createSeparateBookings: false,
       }
     })
   }
