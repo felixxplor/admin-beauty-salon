@@ -11,6 +11,7 @@ import {
   Search,
   Package,
   Unplug,
+  DoorOpen,
 } from 'lucide-react'
 import { useServices } from '../features/services/useServices'
 import Spinner from '../ui/Spinner'
@@ -79,6 +80,7 @@ const POSSystem = () => {
   }
 
   const subtotal = cart.reduce((sum, item) => {
+    // Use custom price for POA items, otherwise calculate normally
     let price
     if (item.isPOA && item.customPrice) {
       price = parseFloat(item.customPrice) || 0
@@ -89,7 +91,7 @@ const POSSystem = () => {
     }
     return sum + price * item.quantity
   }, 0)
-  const total = subtotal
+  const total = subtotal // No tax - prices already include tax
 
   const openCashDrawer = async () => {
     try {
@@ -140,6 +142,42 @@ const POSSystem = () => {
     }
   }
 
+  const manualOpenDrawer = async () => {
+    setIsProcessing(true)
+    try {
+      const drawerResult = await openCashDrawer()
+      if (drawerResult.success) {
+        setMessage({ type: 'success', text: 'Cash drawer opened successfully' })
+
+        // Log manual drawer opening
+        await supabase.from('cash_drawer_logs').insert([
+          {
+            action: 'manual_open',
+            user_id: 'current_user_id',
+            timestamp: new Date().toISOString(),
+            amount: null,
+            status: 'success',
+            metadata: {
+              reason: 'manual_open',
+            },
+          },
+        ])
+      } else {
+        setMessage({ type: 'error', text: 'Failed to open cash drawer' })
+      }
+    } catch (error) {
+      console.error('Manual drawer open error:', error)
+      setMessage({ type: 'error', text: 'Error opening cash drawer' })
+    } finally {
+      setIsProcessing(false)
+
+      // Clear message after 2 seconds
+      setTimeout(() => {
+        setMessage({ type: '', text: '' })
+      }, 2000)
+    }
+  }
+
   const logTransaction = async () => {
     const transactionData = {
       items: cart,
@@ -163,7 +201,7 @@ const POSSystem = () => {
       await supabase.from('cash_drawer_logs').insert([
         {
           action: 'drawer_opened',
-          user_id: 'current_user_id',
+          user_id: 0,
           timestamp: new Date().toISOString(),
           amount: total,
           status: 'success',
@@ -224,6 +262,7 @@ const POSSystem = () => {
     paymentMethod === 'cash' && cashReceived ? Math.max(0, parseFloat(cashReceived) - total) : 0
 
   const getServicePrice = (service) => {
+    // For POA items in cart, use custom price if set
     if (service.isPOA && service.customPrice) {
       return parseFloat(service.customPrice) || 0
     }
@@ -358,28 +397,56 @@ const POSSystem = () => {
       <div style={styles.cartPanel} className="cartPanel">
         <div style={styles.cartHeader}>
           <h2 style={styles.cartTitle}>Current Service</h2>
-          {serialPort && (
+          <div style={{ display: 'flex', gap: '8px' }}>
             <button
-              onClick={disconnectCashDrawer}
+              onClick={manualOpenDrawer}
+              disabled={isProcessing}
               style={{
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
                 padding: '8px 12px',
-                backgroundColor: '#FEE2E2',
-                color: '#DC2626',
+                backgroundColor: isProcessing ? '#D1D5DB' : '#DBEAFE',
+                color: isProcessing ? '#9CA3AF' : '#1D4ED8',
                 borderRadius: '8px',
                 fontSize: '13px',
                 fontWeight: '500',
                 transition: 'background-color 0.2s',
+                cursor: isProcessing ? 'not-allowed' : 'pointer',
               }}
-              onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#FECACA')}
-              onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#FEE2E2')}
+              onMouseOver={(e) => {
+                if (!isProcessing) e.currentTarget.style.backgroundColor = '#BFDBFE'
+              }}
+              onMouseOut={(e) => {
+                if (!isProcessing) e.currentTarget.style.backgroundColor = '#DBEAFE'
+              }}
             >
-              <Unplug size={16} />
-              Disconnect Drawer
+              <DoorOpen size={16} />
+              Open Drawer
             </button>
-          )}
+            {serialPort && (
+              <button
+                onClick={disconnectCashDrawer}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  padding: '8px 12px',
+                  backgroundColor: '#FEE2E2',
+                  color: '#DC2626',
+                  borderRadius: '8px',
+                  fontSize: '13px',
+                  fontWeight: '500',
+                  transition: 'background-color 0.2s',
+                }}
+                onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#FECACA')}
+                onMouseOut={(e) => (e.currentTarget.style.backgroundColor = '#FEE2E2')}
+              >
+                <Unplug size={16} />
+                Disconnect
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Cart Items */}
