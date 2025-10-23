@@ -1153,7 +1153,7 @@ const BookingCalendar = () => {
               <div
                 style={{
                   position: 'absolute',
-                  top: `${currentTimePosition + 52}px`, // 52px accounts for the sticky header
+                  top: `${currentTimePosition + 70}px`,
                   left: 0,
                   right: 0,
                   height: '2px',

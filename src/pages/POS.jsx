@@ -30,15 +30,29 @@ const POSSystem = () => {
   const [isProcessing, setIsProcessing] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
   const [serialPort, setSerialPort] = useState(null)
+  const [cartDiscount, setCartDiscount] = useState('')
+  const [discountType, setDiscountType] = useState('amount') // 'amount' or 'percentage'
 
   if (isLoading) return <Spinner />
   if (!services || !services.length) return <Empty resourceName="services" />
 
-  const categories = ['All', ...new Set(services.map((s) => s.category))]
+  // Add 'Popular' to the categories
+  const regularCategories = [...new Set(services.map((s) => s.category))]
+  const categories = ['All', 'Popular', ...regularCategories]
 
   const filteredServices = services.filter((service) => {
     const matchesSearch = service.name.toLowerCase().includes(searchQuery.toLowerCase())
-    const matchesCategory = selectedCategory === 'All' || service.category === selectedCategory
+
+    // Handle category filtering
+    let matchesCategory
+    if (selectedCategory === 'All') {
+      matchesCategory = true
+    } else if (selectedCategory === 'Popular') {
+      matchesCategory = service.popular === true
+    } else {
+      matchesCategory = service.category === selectedCategory
+    }
+
     return matchesSearch && matchesCategory
   })
 
@@ -91,7 +105,17 @@ const POSSystem = () => {
     }
     return sum + price * item.quantity
   }, 0)
-  const total = subtotal // No tax - prices already include tax
+
+  // Calculate cart discount
+  const cartDiscountValue = parseFloat(cartDiscount) || 0
+  let discountAmount = 0
+  if (discountType === 'percentage') {
+    discountAmount = (subtotal * cartDiscountValue) / 100
+  } else {
+    discountAmount = cartDiscountValue
+  }
+
+  const total = Math.max(0, subtotal - discountAmount) // Ensure total is not negative
 
   const openCashDrawer = async () => {
     try {
@@ -182,6 +206,9 @@ const POSSystem = () => {
     const transactionData = {
       items: cart,
       subtotal: subtotal,
+      discount_type: discountType,
+      discount_value: cartDiscountValue,
+      discount_amount: discountAmount,
       total: total,
       payment_method: paymentMethod,
       cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : null,
@@ -232,96 +259,47 @@ const POSSystem = () => {
       if (paymentMethod === 'cash') {
         const drawerResult = await openCashDrawer()
         if (!drawerResult.success) {
-          console.warn('Cash drawer failed to open:', drawerResult.error)
+          setMessage({ type: 'warning', text: 'Transaction logged but drawer failed to open' })
         }
       }
 
-      const changeAmount = paymentMethod === 'cash' ? parseFloat(cashReceived) - total : 0
       setMessage({
         type: 'success',
-        text:
-          paymentMethod === 'cash'
-            ? `Payment successful! Change: $${changeAmount.toFixed(2)}`
-            : 'Payment successful!',
+        text: 'Payment processed successfully!',
       })
 
       setTimeout(() => {
         setCart([])
-        setShowPayment(false)
         setCashReceived('')
+        setCartDiscount('')
+        setDiscountType('amount')
+        setShowPayment(false)
         setMessage({ type: '', text: '' })
       }, 2000)
     } catch (error) {
-      setMessage({ type: 'error', text: 'Payment failed. Please try again.' })
+      console.error('Payment processing error:', error)
+      setMessage({ type: 'error', text: error.message })
     } finally {
       setIsProcessing(false)
     }
   }
 
-  const change =
-    paymentMethod === 'cash' && cashReceived ? Math.max(0, parseFloat(cashReceived) - total) : 0
-
   const getServicePrice = (service) => {
-    // For POA items in cart, use custom price if set
     if (service.isPOA && service.customPrice) {
       return parseFloat(service.customPrice) || 0
     }
-    const price = parseFloat(service.regularPrice) || 0
+    const regularPrice = parseFloat(service.regularPrice) || 0
     const discount = service.discount || 0
-    return discount > 0 ? price - discount : price
+    return discount > 0 ? regularPrice - discount : regularPrice
   }
 
+  const change = cashReceived ? parseFloat(cashReceived) - total : 0
+
   return (
-    <div style={styles.container} className="container">
-      <style>{`
-        * {
-          box-sizing: border-box;
-          margin: 0;
-          padding: 0;
-        }
-
-        body {
-          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
-          margin: 0;
-          overflow: hidden;
-        }
-
-        input:focus, button:focus {
-          outline: none;
-        }
-
-        button {
-          cursor: pointer;
-          border: none;
-          background: none;
-        }
-
-        input[type="number"]::-webkit-inner-spin-button,
-        input[type="number"]::-webkit-outer-spin-button {
-          -webkit-appearance: none;
-          margin: 0;
-        }
-
-        @media (max-width: 768px) {
-          .container {
-            flex-direction: column;
-          }
-          .leftPanel {
-            width: 100%;
-            flex: 1;
-          }
-          .cartPanel {
-            width: 100%;
-            min-width: 100%;
-            max-height: 40vh;
-            overflow-y: auto;
-          }
-        }
-      `}</style>
-
-      {/* Left Side - Services */}
-      <div style={styles.leftPanel} className="leftPanel">
-        {/* Search and Categories */}
+    <div style={styles.container}>
+      {/* Services Panel */}
+      <div style={styles.leftPanel}>
+        {/* Search Bar */}
         <div style={styles.searchContainer}>
           <div style={styles.searchInputWrapper}>
             <Search style={styles.searchIcon} size={20} />
@@ -334,6 +312,7 @@ const POSSystem = () => {
             />
           </div>
 
+          {/* Category Tabs */}
           <div style={styles.categoriesWrapper}>
             {categories.map((category) => (
               <button
@@ -352,91 +331,129 @@ const POSSystem = () => {
 
         {/* Services Grid */}
         <div style={styles.productsContainer}>
-          <div style={styles.productsGrid}>
-            {filteredServices.map((service) => (
-              <button
-                key={service.id}
-                onClick={() => addToCart(service)}
-                style={styles.productCard}
-              >
-                <h3 style={styles.productName}>{service.name}</h3>
-                <div style={styles.priceContainer}>
-                  {service.isPOA ? (
-                    <p style={styles.productPrice}>POA</p>
-                  ) : service.discount > 0 ? (
-                    <>
-                      <p style={styles.originalPrice}>
-                        ${parseFloat(service.regularPrice || 0).toFixed(2)}
-                      </p>
-                      <p style={styles.productPrice}>${getServicePrice(service).toFixed(2)}</p>
-                    </>
-                  ) : (
-                    <p style={styles.productPrice}>
-                      ${parseFloat(service.regularPrice || 0).toFixed(2)}
-                    </p>
-                  )}
-                </div>
-                <p style={styles.productDuration}>{service.duration} min</p>
-                {service.discount > 0 && (
-                  <span style={styles.discountBadge}>-${service.discount}</span>
-                )}
-              </button>
-            ))}
-          </div>
-
-          {filteredServices.length === 0 && (
+          {filteredServices.length === 0 ? (
             <div style={styles.emptyState}>
-              <Package size={64} color="#9CA3AF" />
+              <Package size={48} style={{ color: '#9CA3AF' }} />
               <p style={styles.emptyStateText}>No services found</p>
+            </div>
+          ) : (
+            <div style={styles.productsGrid}>
+              {filteredServices.map((service) => {
+                const regularPrice = parseFloat(service.regularPrice) || 0
+                const discount = service.discount || 0
+                const finalPrice = discount > 0 ? regularPrice - discount : regularPrice
+
+                return (
+                  <div
+                    key={service.id}
+                    onClick={() => addToCart(service)}
+                    style={styles.productCard}
+                  >
+                    {discount > 0 && <div style={styles.discountBadge}>-${discount}</div>}
+                    {service.popular && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: '8px',
+                          left: '8px',
+                          backgroundColor: '#FBBF24',
+                          color: '#78350F',
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          fontSize: '11px',
+                          fontWeight: 'bold',
+                        }}
+                      >
+                        ⭐
+                      </div>
+                    )}
+
+                    <h3 style={styles.productName}>{service.name}</h3>
+                    <p style={styles.productDuration}>{service.duration} min</p>
+
+                    <div style={styles.priceContainer}>
+                      {service.isPOA ? (
+                        <span
+                          style={{
+                            backgroundColor: '#DBEAFE',
+                            color: '#1E40AF',
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            fontSize: '12px',
+                            fontWeight: 'bold',
+                          }}
+                        >
+                          POA
+                        </span>
+                      ) : (
+                        <>
+                          {discount > 0 && (
+                            <span style={styles.originalPrice}>${regularPrice.toFixed(2)}</span>
+                          )}
+                          <span style={styles.productPrice}>${finalPrice.toFixed(2)}</span>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
       </div>
 
-      {/* Right Side - Cart */}
-      <div style={styles.cartPanel} className="cartPanel">
+      {/* Cart Panel */}
+      <div style={styles.cartPanel}>
         <div style={styles.cartHeader}>
-          <h2 style={styles.cartTitle}>Current Service</h2>
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={styles.cartTitle}>
+            <ShoppingCart size={24} style={{ marginRight: '8px' }} />
+            Cart ({cart.length})
+          </div>
+
+          {/* Cash Drawer Controls */}
+          <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
             <button
               onClick={manualOpenDrawer}
               disabled={isProcessing}
               style={{
+                padding: '8px 12px',
+                backgroundColor: '#60A5FA',
+                color: 'white',
+                borderRadius: '6px',
+                fontSize: '13px',
+                fontWeight: '500',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px',
-                padding: '8px 12px',
-                backgroundColor: isProcessing ? '#D1D5DB' : '#DBEAFE',
-                color: isProcessing ? '#9CA3AF' : '#1D4ED8',
-                borderRadius: '8px',
-                fontSize: '13px',
-                fontWeight: '500',
-                transition: 'background-color 0.2s',
                 cursor: isProcessing ? 'not-allowed' : 'pointer',
+                opacity: isProcessing ? 0.5 : 1,
+                transition: 'background-color 0.2s',
               }}
               onMouseOver={(e) => {
-                if (!isProcessing) e.currentTarget.style.backgroundColor = '#BFDBFE'
+                if (!isProcessing) e.currentTarget.style.backgroundColor = '#3B82F6'
               }}
               onMouseOut={(e) => {
-                if (!isProcessing) e.currentTarget.style.backgroundColor = '#DBEAFE'
+                if (!isProcessing) e.currentTarget.style.backgroundColor = '#60A5FA'
               }}
             >
               <DoorOpen size={16} />
-              Open Drawer
+              {isProcessing ? 'Opening...' : 'Open Drawer'}
             </button>
+
             {serialPort && (
               <button
                 onClick={disconnectCashDrawer}
                 style={{
+                  padding: '8px 12px',
+                  backgroundColor: '#FEE2E2',
+                  color: '#991B1B',
+                  borderRadius: '6px',
+                  fontSize: '13px',
+                  fontWeight: '500',
                   display: 'flex',
                   alignItems: 'center',
                   gap: '6px',
-                  padding: '8px 12px',
-                  backgroundColor: '#FEE2E2',
-                  color: '#DC2626',
-                  borderRadius: '8px',
-                  fontSize: '13px',
-                  fontWeight: '500',
+                  cursor: 'pointer',
                   transition: 'background-color 0.2s',
                 }}
                 onMouseOver={(e) => (e.currentTarget.style.backgroundColor = '#FECACA')}
@@ -452,7 +469,10 @@ const POSSystem = () => {
         {/* Cart Items */}
         <div style={styles.cartItems}>
           {cart.length === 0 ? (
-            <div style={styles.emptyCart}></div>
+            <div style={styles.emptyCart}>
+              <ShoppingCart size={48} style={{ color: '#9CA3AF' }} />
+              <p style={styles.emptyCartText}>Cart is empty</p>
+            </div>
           ) : (
             <div style={styles.cartItemsList}>
               {cart.map((item) => {
@@ -535,6 +555,160 @@ const POSSystem = () => {
         {/* Totals */}
         {cart.length > 0 && (
           <div style={styles.totalsContainer}>
+            {/* Discount Input Section */}
+            <div style={{ marginBottom: '12px' }}>
+              <label
+                style={{
+                  fontSize: '13px',
+                  fontWeight: '500',
+                  color: '#374151',
+                  display: 'block',
+                  marginBottom: '8px',
+                }}
+              >
+                Add Discount (Optional)
+              </label>
+
+              {/* Discount Type Toggle */}
+              <div
+                style={{
+                  display: 'flex',
+                  gap: '8px',
+                  marginBottom: '8px',
+                }}
+              >
+                <button
+                  onClick={() => setDiscountType('amount')}
+                  style={{
+                    flex: 1,
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: '500',
+                    borderRadius: '6px',
+                    backgroundColor: discountType === 'amount' ? '#2563EB' : '#E5E7EB',
+                    color: discountType === 'amount' ? 'white' : '#374151',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  $ Amount
+                </button>
+                <button
+                  onClick={() => setDiscountType('percentage')}
+                  style={{
+                    flex: 1,
+                    padding: '6px 12px',
+                    fontSize: '12px',
+                    fontWeight: '500',
+                    borderRadius: '6px',
+                    backgroundColor: discountType === 'percentage' ? '#2563EB' : '#E5E7EB',
+                    color: discountType === 'percentage' ? 'white' : '#374151',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s',
+                  }}
+                >
+                  % Percent
+                </button>
+              </div>
+
+              {/* Discount Input */}
+              <div style={{ position: 'relative' }}>
+                {discountType === 'amount' ? (
+                  <DollarSign
+                    size={16}
+                    style={{
+                      position: 'absolute',
+                      left: '10px',
+                      top: '10px',
+                      color: '#9CA3AF',
+                    }}
+                  />
+                ) : (
+                  <span
+                    style={{
+                      position: 'absolute',
+                      left: '10px',
+                      top: '10px',
+                      color: '#9CA3AF',
+                      fontSize: '14px',
+                      fontWeight: '500',
+                    }}
+                  >
+                    %
+                  </span>
+                )}
+                <input
+                  type="number"
+                  step="0.01"
+                  value={cartDiscount}
+                  onChange={(e) => setCartDiscount(e.target.value)}
+                  placeholder={discountType === 'amount' ? '0.00' : '0'}
+                  style={{
+                    width: '100%',
+                    paddingLeft: '32px',
+                    paddingRight: '12px',
+                    paddingTop: '8px',
+                    paddingBottom: '8px',
+                    border: '1px solid #D1D5DB',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                  }}
+                />
+              </div>
+
+              {/* Clear Discount Button */}
+              {cartDiscount && (
+                <button
+                  onClick={() => setCartDiscount('')}
+                  style={{
+                    marginTop: '6px',
+                    fontSize: '12px',
+                    color: '#EF4444',
+                    cursor: 'pointer',
+                    padding: '4px',
+                  }}
+                >
+                  Clear discount
+                </button>
+              )}
+            </div>
+
+            {/* Subtotal */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: '14px',
+                color: '#6B7280',
+                marginBottom: '4px',
+              }}
+            >
+              <span>Subtotal:</span>
+              <span>${subtotal.toFixed(2)}</span>
+            </div>
+
+            {/* Discount Display */}
+            {discountAmount > 0 && (
+              <div
+                style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  fontSize: '14px',
+                  color: '#EF4444',
+                  marginBottom: '4px',
+                }}
+              >
+                <span>
+                  Discount (
+                  {discountType === 'percentage'
+                    ? `${cartDiscountValue}%`
+                    : `$${cartDiscountValue.toFixed(2)}`}
+                  ):
+                </span>
+                <span>-${discountAmount.toFixed(2)}</span>
+              </div>
+            )}
+
             <div style={styles.grandTotal}>
               <span>Total:</span>
               <span>${total.toFixed(2)}</span>
@@ -581,6 +755,24 @@ const POSSystem = () => {
 
             <div style={styles.totalDisplay}>
               <p style={styles.totalLabel}>Total Amount</p>
+              {discountAmount > 0 && (
+                <div
+                  style={{
+                    fontSize: '14px',
+                    color: '#6B7280',
+                    marginTop: '4px',
+                  }}
+                >
+                  <div>Subtotal: ${subtotal.toFixed(2)}</div>
+                  <div style={{ color: '#EF4444' }}>
+                    Discount (
+                    {discountType === 'percentage'
+                      ? `${cartDiscountValue}%`
+                      : `$${cartDiscountValue.toFixed(2)}`}
+                    ): -${discountAmount.toFixed(2)}
+                  </div>
+                </div>
+              )}
               <p style={styles.totalAmount}>${total.toFixed(2)}</p>
             </div>
 
