@@ -500,12 +500,11 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
 }
 
 // Payment Modal Component
-const PaymentModal = ({ isOpen, onClose, booking }) => {
+const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) => {
   const [paymentMethod, setPaymentMethod] = useState('cash')
   const [cashReceived, setCashReceived] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
   const [message, setMessage] = useState({ type: '', text: '' })
-  const [serialPort, setSerialPort] = useState(null)
   const [discount, setDiscount] = useState('')
   const [discountType, setDiscountType] = useState('amount') // 'amount' or 'percentage'
 
@@ -678,9 +677,28 @@ const PaymentModal = ({ isOpen, onClose, booking }) => {
       <div style={paymentModalStyles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={paymentModalStyles.header}>
           <h2 style={paymentModalStyles.title}>Complete Payment</h2>
-          <button onClick={onClose} style={paymentModalStyles.closeButton}>
-            ✕
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {serialPort && (
+              <div
+                style={{
+                  fontSize: '12px',
+                  color: '#10B981',
+                  fontWeight: '500',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  backgroundColor: '#ECFDF5',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                }}
+              >
+                <span style={{ fontSize: '10px' }}>🟢</span> Drawer Connected
+              </div>
+            )}
+            <button onClick={onClose} style={paymentModalStyles.closeButton}>
+              ✕
+            </button>
+          </div>
         </div>
 
         {/* Booking Summary */}
@@ -1160,6 +1178,7 @@ const BookingDetailPage = () => {
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
+  const [serialPort, setSerialPort] = useState(null)
 
   // Check if we should auto-open payment modal from URL
   useEffect(() => {
@@ -1167,6 +1186,19 @@ const BookingDetailPage = () => {
       setIsPaymentModalOpen(true)
     }
   }, [searchParams])
+
+  const disconnectCashDrawer = async () => {
+    if (serialPort) {
+      try {
+        await serialPort.close()
+        alert('Cash drawer disconnected successfully')
+      } catch (error) {
+        console.error('Error closing port:', error)
+        alert('Error disconnecting cash drawer')
+      }
+      setSerialPort(null)
+    }
+  }
 
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A'
@@ -1315,6 +1347,27 @@ const BookingDetailPage = () => {
             flex: '0 0 auto',
           }}
         >
+          {serialPort && (
+            <button
+              onClick={disconnectCashDrawer}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: '#F59E0B',
+                color: 'white',
+                border: 'none',
+                borderRadius: '8px',
+                cursor: 'pointer',
+                fontSize: '14px',
+                fontWeight: '600',
+                whiteSpace: 'nowrap',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+              }}
+            >
+              🔌 Disconnect Drawer
+            </button>
+          )}
           <button
             onClick={() => setIsPaymentModalOpen(true)}
             style={{
@@ -1536,6 +1589,8 @@ const BookingDetailPage = () => {
         isOpen={isPaymentModalOpen}
         onClose={() => setIsPaymentModalOpen(false)}
         booking={booking}
+        serialPort={serialPort}
+        setSerialPort={setSerialPort}
       />
 
       {/* Delete Confirmation Modal */}
