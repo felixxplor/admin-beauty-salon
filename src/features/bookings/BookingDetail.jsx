@@ -6,6 +6,7 @@ import { deleteBooking, getBooking, updateBooking } from '../../services/apiBook
 import { modalStyles, styles } from '../../styles/BookingDetailStyles'
 import { getStaff } from '../../services/apiStaff'
 import { getServices } from '../../services/apiServices'
+import supabase from '../../services/supabase'
 
 // Custom hook to use the getStaff function
 const useStaff = () => {
@@ -231,35 +232,30 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
     }
   }, [booking, services])
 
-  // Auto-update end time and total price when start time or services change
+  // Update end time and total price when services or start time changes
   useEffect(() => {
     if (formData.startTime && selectedServicesInfo.totalDuration > 0) {
-      const calculatedEndTime = calculateEndTime(
-        formData.startTime,
-        selectedServicesInfo.totalDuration
-      )
+      const newEndTime = calculateEndTime(formData.startTime, selectedServicesInfo.totalDuration)
       setFormData((prev) => ({
         ...prev,
-        endTime: calculatedEndTime,
+        endTime: newEndTime,
         totalPrice: selectedServicesInfo.totalPrice,
       }))
     }
   }, [formData.startTime, selectedServicesInfo.totalDuration, selectedServicesInfo.totalPrice])
 
-  const handleInputChange = (field, value) => {
-    setFormData((prev) => ({ ...prev, [field]: value }))
-    if (formErrors[field]) {
-      setFormErrors((prev) => ({ ...prev, [field]: '' }))
-    }
-  }
+  const handleServiceToggle = (serviceId) => {
+    setFormData((prev) => {
+      const serviceIdStr = serviceId.toString()
+      const isSelected = prev.selectedServiceIds.includes(serviceIdStr)
 
-  const handleServiceSelection = (serviceId) => {
-    setFormData((prev) => ({
-      ...prev,
-      selectedServiceIds: prev.selectedServiceIds.includes(serviceId)
-        ? prev.selectedServiceIds.filter((id) => id !== serviceId)
-        : [...prev.selectedServiceIds, serviceId],
-    }))
+      return {
+        ...prev,
+        selectedServiceIds: isSelected
+          ? prev.selectedServiceIds.filter((id) => id !== serviceIdStr)
+          : [...prev.selectedServiceIds, serviceIdStr],
+      }
+    })
   }
 
   const validateForm = () => {
@@ -268,42 +264,37 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
     if (formData.selectedServiceIds.length === 0) {
       errors.services = 'Please select at least one service'
     }
+
     if (!formData.startTime) {
       errors.startTime = 'Start time is required'
     }
+
     if (!formData.staffId) {
-      errors.staffId = 'Staff member is required'
+      errors.staffId = 'Please select a staff member'
     }
 
-    return errors
+    setFormErrors(errors)
+    return Object.keys(errors).length === 0
   }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
 
-    const errors = validateForm()
-    if (Object.keys(errors).length > 0) {
-      setFormErrors(errors)
+    if (!validateForm()) {
       return
     }
 
     setIsSubmitting(true)
-    try {
-      // Keep the price as-is (with "+" if present) since it's stored as TEXT in database
-      const priceValue = formData.totalPrice
 
+    try {
       const updateData = {
         numClients: parseInt(formData.numClients),
         status: formData.status,
         notes: formData.notes,
-        startTime: formData.startTime,
-        endTime: formData.endTime,
-        totalPrice: priceValue,
+        startTime: new Date(formData.startTime).toISOString(),
+        endTime: new Date(formData.endTime).toISOString(),
+        totalPrice: formData.totalPrice,
         serviceIds: formData.selectedServiceIds.map((id) => parseInt(id)),
-        serviceId:
-          formData.selectedServiceIds.length === 1
-            ? parseInt(formData.selectedServiceIds[0])
-            : null,
         staffId: parseInt(formData.staffId),
       }
 
@@ -312,340 +303,194 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
       onClose()
     } catch (error) {
       console.error('Error updating booking:', error)
-      setFormErrors({ submit: error.message || 'Failed to update booking' })
+      setFormErrors({ submit: 'Failed to update booking. Please try again.' })
     } finally {
       setIsSubmitting(false)
     }
   }
 
-  const handleClose = () => {
-    setFormErrors({})
-    setServiceSearchTerm('')
-    onClose()
-  }
-
   if (!isOpen) return null
-  if (servicesLoading || staffLoading) {
-    return (
-      <div style={modalStyles.overlay}>
-        <div style={modalStyles.modal}>
-          <Spinner />
-        </div>
-      </div>
-    )
-  }
 
   return (
-    <div style={modalStyles.overlay} onClick={handleClose}>
+    <div style={modalStyles.overlay} onClick={onClose}>
       <div style={modalStyles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={modalStyles.header}>
           <h2 style={modalStyles.title}>Edit Booking</h2>
-          <button style={modalStyles.closeButton} onClick={handleClose}>
-            ×
+          <button onClick={onClose} style={modalStyles.closeButton}>
+            ✕
           </button>
         </div>
 
         <form onSubmit={handleSubmit} style={modalStyles.form}>
           {/* Services Selection */}
           <div style={modalStyles.formGroup}>
-            <label style={modalStyles.label}>Services (Select Multiple) *</label>
-
+            <label style={modalStyles.label}>
+              Services <span style={{ color: '#EF4444' }}>*</span>
+            </label>
             <input
               type="text"
               placeholder="Search services..."
               value={serviceSearchTerm}
               onChange={(e) => setServiceSearchTerm(e.target.value)}
-              style={{
-                ...modalStyles.input,
-                marginBottom: '8px',
-                color: '#000000',
-                WebkitTextFillColor: '#000000',
-              }}
+              style={modalStyles.searchInput}
             />
-
-            <div
-              style={{
-                border: '1px solid #d1d5db',
-                borderRadius: '6px',
-                padding: '8px',
-                maxHeight: '200px',
-                overflowY: 'auto',
-                backgroundColor: 'white',
-              }}
-            >
-              {filteredServices.length > 0 ? (
+            <div style={modalStyles.servicesContainer}>
+              {servicesLoading ? (
+                <div style={modalStyles.loadingText}>Loading services...</div>
+              ) : filteredServices.length === 0 ? (
+                <div style={modalStyles.emptyText}>No services found</div>
+              ) : (
                 filteredServices.map((service) => (
-                  <label
-                    key={service.id}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      padding: '8px',
-                      cursor: 'pointer',
-                      borderRadius: '4px',
-                      marginBottom: '4px',
-                      backgroundColor: formData.selectedServiceIds.includes(service.id.toString())
-                        ? '#e0f2fe'
-                        : 'transparent',
-                    }}
-                  >
+                  <label key={service.id} style={modalStyles.serviceItem}>
                     <input
                       type="checkbox"
                       checked={formData.selectedServiceIds.includes(service.id.toString())}
-                      onChange={() => handleServiceSelection(service.id.toString())}
-                      style={{ marginRight: '8px' }}
+                      onChange={() => handleServiceToggle(service.id)}
+                      style={modalStyles.checkbox}
                     />
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontWeight: '500', fontSize: '14px', color: '#000' }}>
-                        {service.name}
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#666' }}>
-                        {service.category && (
-                          <span
-                            style={{
-                              backgroundColor: '#e5e7eb',
-                              padding: '2px 6px',
-                              borderRadius: '3px',
-                              marginRight: '6px',
-                              fontSize: '11px',
-                            }}
-                          >
-                            {service.category}
-                          </span>
-                        )}
-                        {service.duration} min - $
-                        {(() => {
-                          // Service prices are TEXT format (e.g., "20+", "POA")
-                          const regularPriceStr = service.regularPrice
-                            ? String(service.regularPrice)
-                            : '0'
-                          const discountStr = service.discount ? String(service.discount) : '0'
-
-                          const hasPlus = regularPriceStr.includes('+')
-                          const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
-                          const discountNum = parseFloat(discountStr.replace('+', ''))
-
-                          // Check if we got valid numbers
-                          if (isNaN(regularPriceNum)) {
-                            return regularPriceStr // Return original text (e.g., "POA")
-                          }
-
-                          const finalPrice =
-                            regularPriceNum - (isNaN(discountNum) ? 0 : discountNum)
-
-                          return hasPlus ? `${finalPrice}+` : `${finalPrice}`
-                        })()}
-                        {service.discount > 0 && (
-                          <span
-                            style={{
-                              textDecoration: 'line-through',
-                              marginLeft: '4px',
-                              opacity: 0.7,
-                            }}
-                          >
-                            ${service.regularPrice}
-                          </span>
-                        )}
+                    <div style={modalStyles.serviceInfo}>
+                      <div style={modalStyles.serviceName}>{service.name}</div>
+                      <div style={modalStyles.serviceDetails}>
+                        {service.duration} min • ${service.regularPrice}
+                        {service.category && ` • ${service.category}`}
                       </div>
                     </div>
                   </label>
                 ))
-              ) : (
-                <div
-                  style={{ padding: '16px', textAlign: 'center', color: '#666', fontSize: '14px' }}
-                >
-                  No services found matching &#39;{serviceSearchTerm}&#39;
-                </div>
               )}
             </div>
-
-            {serviceSearchTerm && (
-              <button
-                type="button"
-                onClick={() => setServiceSearchTerm('')}
-                style={{
-                  marginTop: '8px',
-                  padding: '6px 12px',
-                  fontSize: '12px',
-                  color: '#2563eb',
-                  backgroundColor: 'transparent',
-                  border: 'none',
-                  cursor: 'pointer',
-                  textDecoration: 'underline',
-                }}
-              >
-                Clear search
-              </button>
-            )}
-
-            {formErrors.services && <div style={modalStyles.errorText}>{formErrors.services}</div>}
-
-            {selectedServicesInfo.totalDuration > 0 && (
-              <div
-                style={{
-                  marginTop: '8px',
-                  padding: '8px',
-                  backgroundColor: '#f0f9ff',
-                  borderRadius: '4px',
-                  fontSize: '12px',
-                }}
-              >
+            {formData.selectedServiceIds.length > 0 && (
+              <div style={modalStyles.selectedServices}>
                 <strong>Selected:</strong> {selectedServicesInfo.serviceNames.join(', ')}
-                <br />
-                <strong>Total Duration:</strong> {selectedServicesInfo.totalDuration} minutes
-                <br />
-                <strong>Total Price:</strong> ${selectedServicesInfo.totalPrice}
+                <div style={modalStyles.serviceSummary}>
+                  Duration: {selectedServicesInfo.totalDuration} min • Total: $
+                  {selectedServicesInfo.totalPrice}
+                </div>
               </div>
             )}
+            {formErrors.services && <div style={modalStyles.errorText}>{formErrors.services}</div>}
+          </div>
+
+          {/* Staff Selection */}
+          <div style={modalStyles.formGroup}>
+            <label style={modalStyles.label}>
+              Staff Member <span style={{ color: '#EF4444' }}>*</span>
+            </label>
+            <select
+              value={formData.staffId}
+              onChange={(e) => setFormData({ ...formData, staffId: e.target.value })}
+              style={modalStyles.select}
+            >
+              <option value="">Select staff member</option>
+              {staffLoading ? (
+                <option disabled>Loading staff...</option>
+              ) : (
+                staff.map((member) => (
+                  <option key={member.id} value={member.id}>
+                    {member.name}
+                  </option>
+                ))
+              )}
+            </select>
+            {formErrors.staffId && <div style={modalStyles.errorText}>{formErrors.staffId}</div>}
           </div>
 
           {/* Start Time */}
           <div style={modalStyles.formGroup}>
-            <label style={modalStyles.label}>Start Time *</label>
+            <label style={modalStyles.label}>
+              Start Time <span style={{ color: '#EF4444' }}>*</span>
+            </label>
             <input
               type="datetime-local"
               value={formData.startTime}
-              onChange={(e) => handleInputChange('startTime', e.target.value)}
-              style={{
-                ...modalStyles.input,
-                color: '#000000',
-                WebkitTextFillColor: '#000000',
-                ...(formErrors.startTime ? modalStyles.inputError : {}),
-              }}
+              onChange={(e) => setFormData({ ...formData, startTime: e.target.value })}
+              style={modalStyles.input}
             />
             {formErrors.startTime && (
               <div style={modalStyles.errorText}>{formErrors.startTime}</div>
             )}
           </div>
 
-          {/* End Time (Auto-calculated) */}
+          {/* End Time (Read-only, calculated) */}
           <div style={modalStyles.formGroup}>
-            <label style={modalStyles.label}>End Time (Auto-calculated)</label>
+            <label style={modalStyles.label}>End Time (Calculated)</label>
             <input
               type="datetime-local"
               value={formData.endTime}
-              disabled
-              style={{
-                ...modalStyles.input,
-                backgroundColor: '#f9fafb',
-                color: '#000000',
-                WebkitTextFillColor: '#000000',
-              }}
+              readOnly
+              style={{ ...modalStyles.input, backgroundColor: '#F3F4F6' }}
             />
           </div>
 
-          {/* Staff Selection */}
+          {/* Number of Clients */}
           <div style={modalStyles.formGroup}>
-            <label style={modalStyles.label}>Staff Member *</label>
-            <select
-              value={formData.staffId}
-              onChange={(e) => handleInputChange('staffId', e.target.value)}
-              style={{
-                ...modalStyles.select,
-                color: '#000000',
-                WebkitTextFillColor: '#000000',
-                ...(formErrors.staffId ? modalStyles.inputError : {}),
-              }}
-            >
-              <option value="">Select staff member</option>
-              {staff &&
-                staff.map((staffMember) => (
-                  <option key={staffMember.id} value={staffMember.id}>
-                    {staffMember.name || staffMember.id}
-                  </option>
-                ))}
-            </select>
-            {formErrors.staffId && <div style={modalStyles.errorText}>{formErrors.staffId}</div>}
+            <label style={modalStyles.label}>Number of Clients</label>
+            <input
+              type="number"
+              min="1"
+              value={formData.numClients}
+              onChange={(e) => setFormData({ ...formData, numClients: e.target.value })}
+              style={modalStyles.input}
+            />
           </div>
 
-          <div style={modalStyles.formRow}>
-            <div style={modalStyles.formGroup}>
-              <label style={modalStyles.label}>Number of Clients</label>
-              <input
-                type="number"
-                min="1"
-                value={formData.numClients}
-                onChange={(e) => handleInputChange('numClients', e.target.value)}
-                style={{
-                  ...modalStyles.input,
-                  color: '#000000',
-                  WebkitTextFillColor: '#000000',
-                }}
-              />
-            </div>
-
-            <div style={modalStyles.formGroup}>
-              <label style={modalStyles.label}>Total Price (Auto-calculated)</label>
-              <input
-                type="text"
-                value={`$${formData.totalPrice}`}
-                disabled
-                style={{
-                  ...modalStyles.input,
-                  backgroundColor: '#f9fafb',
-                  color: '#000000',
-                  WebkitTextFillColor: '#000000',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              />
-            </div>
-          </div>
-
+          {/* Status */}
           <div style={modalStyles.formGroup}>
             <label style={modalStyles.label}>Status</label>
             <select
               value={formData.status}
-              onChange={(e) => handleInputChange('status', e.target.value)}
-              style={{
-                ...modalStyles.select,
-                color: '#000000',
-                WebkitTextFillColor: '#000000',
-              }}
+              onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+              style={modalStyles.select}
             >
-              <option value="pending">Pending</option>
               <option value="confirmed">Confirmed</option>
+              <option value="pending">Pending</option>
               <option value="cancelled">Cancelled</option>
               <option value="completed">Completed</option>
             </select>
           </div>
 
+          {/* Notes */}
           <div style={modalStyles.formGroup}>
             <label style={modalStyles.label}>Notes</label>
             <textarea
               value={formData.notes}
-              onChange={(e) => handleInputChange('notes', e.target.value)}
-              style={{
-                ...modalStyles.textarea,
-                color: '#000000',
-                WebkitTextFillColor: '#000000',
-              }}
-              rows={3}
-              placeholder="Add any notes about this booking..."
+              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+              style={modalStyles.textarea}
+              rows="3"
+              placeholder="Add any special notes or requirements..."
             />
           </div>
 
-          {formErrors.submit && <div style={modalStyles.submitError}>{formErrors.submit}</div>}
+          {/* Total Price (Read-only, calculated) */}
+          <div style={modalStyles.formGroup}>
+            <label style={modalStyles.label}>Total Price</label>
+            <input
+              type="text"
+              value={`$${formData.totalPrice}`}
+              readOnly
+              style={{ ...modalStyles.input, backgroundColor: '#F3F4F6' }}
+            />
+          </div>
+
+          {formErrors.submit && (
+            <div style={{ ...modalStyles.errorText, marginBottom: '1rem' }}>
+              {formErrors.submit}
+            </div>
+          )}
 
           <div style={modalStyles.buttonGroup}>
-            <button
-              type="button"
-              onClick={handleClose}
-              style={modalStyles.cancelButton}
-              disabled={isSubmitting}
-            >
+            <button type="button" onClick={onClose} style={modalStyles.cancelButton}>
               Cancel
             </button>
             <button
               type="submit"
+              disabled={isSubmitting}
               style={{
                 ...modalStyles.submitButton,
                 ...(isSubmitting ? modalStyles.submitButtonDisabled : {}),
               }}
-              disabled={isSubmitting}
             >
-              {isSubmitting ? 'Updating...' : 'Update Booking'}
+              {isSubmitting ? 'Saving...' : 'Save Changes'}
             </button>
           </div>
         </form>
@@ -654,212 +499,847 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
   )
 }
 
+// Payment Modal Component
+const PaymentModal = ({ isOpen, onClose, booking }) => {
+  const [paymentMethod, setPaymentMethod] = useState('cash')
+  const [cashReceived, setCashReceived] = useState('')
+  const [isProcessing, setIsProcessing] = useState(false)
+  const [message, setMessage] = useState({ type: '', text: '' })
+  const [serialPort, setSerialPort] = useState(null)
+  const [discount, setDiscount] = useState('')
+  const [discountType, setDiscountType] = useState('amount') // 'amount' or 'percentage'
+
+  const subtotal = parseFloat(booking?.totalPrice || 0)
+
+  // Calculate discount
+  const discountValue = parseFloat(discount) || 0
+  let discountAmount = 0
+  if (discountType === 'percentage') {
+    discountAmount = (subtotal * discountValue) / 100
+  } else {
+    discountAmount = discountValue
+  }
+
+  const totalAmount = Math.max(0, subtotal - discountAmount) // Ensure total is not negative
+  const change =
+    paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - totalAmount : 0
+
+  const openCashDrawer = async () => {
+    try {
+      let port = serialPort
+
+      // Only request port if we don't have one stored
+      if (!port) {
+        port = await navigator.serial.requestPort()
+        setSerialPort(port)
+      }
+
+      // Check if port is already open
+      if (!port.readable || !port.writable) {
+        await port.open({ baudRate: 9600 })
+      }
+
+      const writer = port.writable.getWriter()
+      const command = new Uint8Array([27, 112, 0, 25, 250])
+
+      await writer.write(command)
+      writer.releaseLock()
+
+      // Don't close the port - keep it open for reuse
+      return { success: true }
+    } catch (error) {
+      console.error('Cash drawer error:', error)
+      // Reset port on error
+      setSerialPort(null)
+      return { success: false, error: error.message }
+    }
+  }
+
+  const processPayment = async () => {
+    if (paymentMethod === 'cash') {
+      const received = parseFloat(cashReceived)
+      if (!received || received < totalAmount) {
+        setMessage({ type: 'error', text: 'Insufficient cash received' })
+        setTimeout(() => setMessage({ type: '', text: '' }), 3000)
+        return
+      }
+    }
+
+    setIsProcessing(true)
+
+    try {
+      // Open cash drawer for cash payments
+      if (paymentMethod === 'cash') {
+        const drawerResult = await openCashDrawer()
+        if (!drawerResult.success) {
+          setMessage({ type: 'error', text: 'Failed to open cash drawer. Continue anyway?' })
+          // You might want to add a confirmation here, but we'll continue with payment
+        }
+      }
+
+      // Log the transaction to database
+      const serviceItems =
+        booking.services && Array.isArray(booking.services) && booking.services.length > 0
+          ? booking.services.map((service) => ({
+              id: service.id,
+              name: service.name,
+              quantity: 1,
+              regularPrice: service.regularPrice || 0,
+            }))
+          : booking.service
+          ? [
+              {
+                id: booking.serviceId || booking.service.id,
+                name: booking.service.name,
+                quantity: 1,
+                regularPrice: booking.service.regularPrice || booking.totalPrice,
+              },
+            ]
+          : [
+              {
+                id: booking.serviceId,
+                name: 'Service',
+                quantity: 1,
+                regularPrice: booking.totalPrice,
+              },
+            ]
+
+      const transactionData = {
+        items: serviceItems,
+        subtotal: subtotal,
+        discount_type: discountType,
+        discount_value: discountValue,
+        discount_amount: discountAmount,
+        total: totalAmount,
+        payment_method: paymentMethod,
+        cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : null,
+        change_given: paymentMethod === 'cash' ? change : null,
+        timestamp: new Date().toISOString(),
+        user_id: 'current_user_id', // Replace with actual user ID
+        notes: `Payment for booking #${booking.id} - Client: ${
+          booking?.client?.fullName ||
+          booking?.client?.email ||
+          booking?.client?.phone ||
+          booking?.name ||
+          booking?.phone ||
+          'N/A'
+        }`,
+      }
+
+      const { error: transactionError } = await supabase
+        .from('transactions')
+        .insert([transactionData])
+      if (transactionError) {
+        console.error('Transaction logging error:', transactionError)
+        // Continue with payment even if logging fails
+      }
+
+      // Log cash drawer opening
+      if (paymentMethod === 'cash') {
+        await supabase.from('cash_drawer_logs').insert([
+          {
+            action: 'drawer_opened',
+            user_id: 'current_user_id',
+            timestamp: new Date().toISOString(),
+            amount: totalAmount,
+            status: 'success',
+            metadata: {
+              booking_id: booking.id,
+              payment_method: paymentMethod,
+            },
+          },
+        ])
+      }
+
+      // Update booking status to completed
+      await updateBooking(booking.id, {
+        status: 'completed',
+      })
+
+      setMessage({ type: 'success', text: 'Payment completed successfully!' })
+
+      setTimeout(() => {
+        onClose()
+        // Optionally refresh the page or navigate
+        window.location.reload() // Or use refetch() if available
+      }, 1500)
+    } catch (error) {
+      console.error('Payment error:', error)
+      setMessage({ type: 'error', text: 'Payment failed. Please try again.' })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  if (!isOpen) return null
+
+  return (
+    <div style={paymentModalStyles.overlay} onClick={onClose}>
+      <div style={paymentModalStyles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={paymentModalStyles.header}>
+          <h2 style={paymentModalStyles.title}>Complete Payment</h2>
+          <button onClick={onClose} style={paymentModalStyles.closeButton}>
+            ✕
+          </button>
+        </div>
+
+        {/* Booking Summary */}
+        <div style={paymentModalStyles.bookingSummary}>
+          <div style={paymentModalStyles.summaryRow}>
+            <span>Service:</span>
+            <span style={paymentModalStyles.summaryValue}>
+              {booking?.services && Array.isArray(booking.services) && booking.services.length > 0
+                ? booking.services.map((s) => s.name).join(', ')
+                : booking?.service?.name || 'N/A'}
+            </span>
+          </div>
+        </div>
+
+        {/* Total Amount */}
+        <div style={paymentModalStyles.totalSection}>
+          {/* Discount Input */}
+          <div style={paymentModalStyles.discountSection}>
+            <div style={paymentModalStyles.discountHeader}>
+              <label style={paymentModalStyles.discountLabel}>Discount</label>
+              <div style={paymentModalStyles.discountTypeToggle}>
+                <button
+                  onClick={() => setDiscountType('amount')}
+                  style={{
+                    ...paymentModalStyles.discountTypeButton,
+                    ...(discountType === 'amount'
+                      ? paymentModalStyles.discountTypeButtonActive
+                      : {}),
+                  }}
+                >
+                  $
+                </button>
+                <button
+                  onClick={() => setDiscountType('percentage')}
+                  style={{
+                    ...paymentModalStyles.discountTypeButton,
+                    ...(discountType === 'percentage'
+                      ? paymentModalStyles.discountTypeButtonActive
+                      : {}),
+                  }}
+                >
+                  %
+                </button>
+              </div>
+            </div>
+            <div style={paymentModalStyles.discountInputWrapper}>
+              {discountType === 'amount' ? (
+                <span style={paymentModalStyles.discountSymbol}>$</span>
+              ) : (
+                <span style={paymentModalStyles.discountSymbol}>%</span>
+              )}
+              <input
+                type="number"
+                step="0.01"
+                value={discount}
+                onChange={(e) => setDiscount(e.target.value)}
+                placeholder={discountType === 'amount' ? '0.00' : '0'}
+                style={paymentModalStyles.discountInput}
+              />
+            </div>
+            {discount && (
+              <button
+                onClick={() => setDiscount('')}
+                style={paymentModalStyles.clearDiscountButton}
+              >
+                Clear discount
+              </button>
+            )}
+          </div>
+
+          {/* Amount Breakdown */}
+          <div style={paymentModalStyles.amountBreakdown}>
+            <div style={paymentModalStyles.breakdownRow}>
+              <span style={paymentModalStyles.breakdownLabel}>Subtotal:</span>
+              <span style={paymentModalStyles.breakdownValue}>${subtotal.toFixed(2)}</span>
+            </div>
+            {discountAmount > 0 && (
+              <div style={{ ...paymentModalStyles.breakdownRow, color: '#EF4444' }}>
+                <span style={paymentModalStyles.breakdownLabel}>
+                  Discount (
+                  {discountType === 'percentage'
+                    ? `${discountValue}%`
+                    : `$${discountValue.toFixed(2)}`}
+                  ):
+                </span>
+                <span style={paymentModalStyles.breakdownValue}>-${discountAmount.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+
+          <div style={paymentModalStyles.totalLabel}>Total Amount</div>
+          <div style={paymentModalStyles.totalAmount}>${totalAmount.toFixed(2)}</div>
+        </div>
+
+        {/* Payment Method Selection */}
+        <div style={paymentModalStyles.paymentMethodSection}>
+          <label style={paymentModalStyles.label}>Payment Method</label>
+          <div style={paymentModalStyles.paymentMethodGrid}>
+            <button
+              onClick={() => setPaymentMethod('cash')}
+              style={{
+                ...paymentModalStyles.paymentMethodButton,
+                ...(paymentMethod === 'cash' ? paymentModalStyles.paymentMethodButtonActive : {}),
+              }}
+            >
+              <span style={paymentModalStyles.paymentIcon}>💵</span>
+              <span>Cash</span>
+            </button>
+            <button
+              onClick={() => setPaymentMethod('card')}
+              style={{
+                ...paymentModalStyles.paymentMethodButton,
+                ...(paymentMethod === 'card' ? paymentModalStyles.paymentMethodButtonActive : {}),
+              }}
+            >
+              <span style={paymentModalStyles.paymentIcon}>💳</span>
+              <span>Card</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Cash Input */}
+        {paymentMethod === 'cash' && (
+          <div style={paymentModalStyles.cashInputSection}>
+            <label style={paymentModalStyles.label}>Cash Received</label>
+            <div style={paymentModalStyles.cashInputWrapper}>
+              <span style={paymentModalStyles.dollarSign}>$</span>
+              <input
+                type="number"
+                step="0.01"
+                value={cashReceived}
+                onChange={(e) => setCashReceived(e.target.value)}
+                placeholder="0.00"
+                style={paymentModalStyles.cashInput}
+                autoFocus
+              />
+            </div>
+            {cashReceived && (
+              <div style={paymentModalStyles.changeDisplay}>
+                <span style={paymentModalStyles.changeLabel}>Change:</span>
+                <span style={paymentModalStyles.changeAmount}>
+                  ${change >= 0 ? change.toFixed(2) : '0.00'}
+                </span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Message */}
+        {message.text && (
+          <div
+            style={{
+              ...paymentModalStyles.message,
+              ...(message.type === 'success'
+                ? paymentModalStyles.messageSuccess
+                : paymentModalStyles.messageError),
+            }}
+          >
+            {message.text}
+          </div>
+        )}
+
+        {/* Complete Payment Button */}
+        <button
+          onClick={processPayment}
+          disabled={
+            isProcessing ||
+            (paymentMethod === 'cash' && (!cashReceived || parseFloat(cashReceived) < totalAmount))
+          }
+          style={{
+            ...paymentModalStyles.completeButton,
+            ...(isProcessing ||
+            (paymentMethod === 'cash' && (!cashReceived || parseFloat(cashReceived) < totalAmount))
+              ? paymentModalStyles.completeButtonDisabled
+              : {}),
+          }}
+        >
+          {isProcessing ? 'Processing...' : 'Complete Payment'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// Payment Modal Styles
+const paymentModalStyles = {
+  overlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+  },
+  modal: {
+    backgroundColor: 'white',
+    borderRadius: '12px',
+    width: '90%',
+    maxWidth: '500px',
+    maxHeight: '90vh',
+    overflow: 'auto',
+    boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)',
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '20px 24px',
+    borderBottom: '1px solid #E5E7EB',
+  },
+  title: {
+    fontSize: '20px',
+    fontWeight: '600',
+    color: '#111827',
+    margin: 0,
+  },
+  closeButton: {
+    background: 'none',
+    border: 'none',
+    fontSize: '24px',
+    cursor: 'pointer',
+    color: '#6B7280',
+    padding: '0',
+    width: '32px',
+    height: '32px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '6px',
+  },
+  bookingSummary: {
+    padding: '20px 24px',
+    backgroundColor: '#F9FAFB',
+    borderBottom: '1px solid #E5E7EB',
+  },
+  summaryRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    marginBottom: '8px',
+    fontSize: '14px',
+    color: '#6B7280',
+  },
+  summaryValue: {
+    color: '#111827',
+    fontWeight: '500',
+  },
+  totalSection: {
+    padding: '24px',
+    textAlign: 'center',
+    borderBottom: '1px solid #E5E7EB',
+  },
+  discountSection: {
+    marginBottom: '20px',
+    textAlign: 'left',
+  },
+  discountHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '8px',
+  },
+  discountLabel: {
+    fontSize: '14px',
+    fontWeight: '500',
+    color: '#374151',
+  },
+  discountTypeToggle: {
+    display: 'flex',
+    gap: '4px',
+    backgroundColor: '#F3F4F6',
+    padding: '2px',
+    borderRadius: '6px',
+  },
+  discountTypeButton: {
+    padding: '4px 12px',
+    border: 'none',
+    borderRadius: '4px',
+    backgroundColor: 'transparent',
+    color: '#6B7280',
+    fontSize: '14px',
+    fontWeight: '500',
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+  },
+  discountTypeButtonActive: {
+    backgroundColor: 'white',
+    color: '#10B981',
+    boxShadow: '0 1px 2px rgba(0, 0, 0, 0.05)',
+  },
+  discountInputWrapper: {
+    position: 'relative',
+    marginBottom: '8px',
+  },
+  discountSymbol: {
+    position: 'absolute',
+    left: '12px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    fontSize: '14px',
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  discountInput: {
+    width: '100%',
+    paddingLeft: '32px',
+    paddingRight: '12px',
+    paddingTop: '8px',
+    paddingBottom: '8px',
+    border: '1px solid #D1D5DB',
+    borderRadius: '6px',
+    fontSize: '14px',
+    boxSizing: 'border-box',
+  },
+  clearDiscountButton: {
+    fontSize: '12px',
+    color: '#EF4444',
+    cursor: 'pointer',
+    padding: '4px',
+    background: 'none',
+    border: 'none',
+  },
+  amountBreakdown: {
+    marginBottom: '16px',
+    paddingTop: '12px',
+    borderTop: '1px solid #E5E7EB',
+  },
+  breakdownRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    marginBottom: '8px',
+    fontSize: '14px',
+  },
+  breakdownLabel: {
+    color: '#6B7280',
+  },
+  breakdownValue: {
+    fontWeight: '500',
+    color: '#374151',
+  },
+  totalLabel: {
+    fontSize: '14px',
+    color: '#6B7280',
+    marginBottom: '8px',
+  },
+  totalAmount: {
+    fontSize: '36px',
+    fontWeight: '700',
+    color: '#10B981',
+  },
+  paymentMethodSection: {
+    padding: '24px',
+  },
+  label: {
+    display: 'block',
+    fontSize: '14px',
+    fontWeight: '500',
+    color: '#374151',
+    marginBottom: '12px',
+  },
+  paymentMethodGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gap: '12px',
+  },
+  paymentMethodButton: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '16px',
+    border: '2px solid #E5E7EB',
+    borderRadius: '8px',
+    backgroundColor: 'white',
+    cursor: 'pointer',
+    fontSize: '14px',
+    fontWeight: '500',
+    color: '#374151',
+    transition: 'all 0.2s',
+  },
+  paymentMethodButtonActive: {
+    borderColor: '#10B981',
+    backgroundColor: '#ECFDF5',
+    color: '#10B981',
+  },
+  paymentIcon: {
+    fontSize: '32px',
+  },
+  cashInputSection: {
+    padding: '0 24px 24px',
+  },
+  cashInputWrapper: {
+    position: 'relative',
+    marginBottom: '12px',
+  },
+  dollarSign: {
+    position: 'absolute',
+    left: '12px',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    fontSize: '18px',
+    color: '#6B7280',
+    fontWeight: '500',
+  },
+  cashInput: {
+    width: '100%',
+    padding: '12px 12px 12px 32px',
+    border: '2px solid #E5E7EB',
+    borderRadius: '8px',
+    fontSize: '18px',
+    fontWeight: '500',
+    boxSizing: 'border-box',
+  },
+  changeDisplay: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '12px',
+    backgroundColor: '#F3F4F6',
+    borderRadius: '8px',
+  },
+  changeLabel: {
+    fontSize: '14px',
+    color: '#6B7280',
+  },
+  changeAmount: {
+    fontSize: '20px',
+    fontWeight: '600',
+    color: '#10B981',
+  },
+  message: {
+    margin: '0 24px 16px',
+    padding: '12px 16px',
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontWeight: '500',
+  },
+  messageSuccess: {
+    backgroundColor: '#ECFDF5',
+    color: '#10B981',
+    border: '1px solid #10B981',
+  },
+  messageError: {
+    backgroundColor: '#FEE2E2',
+    color: '#EF4444',
+    border: '1px solid #EF4444',
+  },
+  completeButton: {
+    width: 'calc(100% - 48px)',
+    margin: '0 24px 24px',
+    padding: '14px',
+    backgroundColor: '#10B981',
+    color: 'white',
+    border: 'none',
+    borderRadius: '8px',
+    fontSize: '16px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'background-color 0.2s',
+  },
+  completeButtonDisabled: {
+    backgroundColor: '#9CA3AF',
+    cursor: 'not-allowed',
+  },
+}
+
+// Main BookingDetailPage Component
 const BookingDetailPage = () => {
   const { bookingId } = useParams()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const { booking, isLoading, error, refetch } = useBookingDetail(bookingId)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
-  const [isCompleting, setIsCompleting] = useState(false)
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
 
-  const { booking, isLoading, error, refetch } = useBookingDetail(bookingId)
+  // Check if we should auto-open payment modal from URL
+  useEffect(() => {
+    if (searchParams.get('payment') === 'true') {
+      setIsPaymentModalOpen(true)
+    }
+  }, [searchParams])
 
-  const getStatusBadgeStyle = (status) => {
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A'
+    const date = new Date(dateString)
+    return date.toLocaleDateString('en-US', {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    })
+  }
+
+  const formatTime = (dateString) => {
+    if (!dateString) return 'N/A'
+    const date = new Date(dateString)
+    return date.toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+
+  const formatDateTime = (dateString) => {
+    if (!dateString) return 'N/A'
+    const date = new Date(dateString)
+    return date.toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  }
+
+  const calculateDuration = (start, end) => {
+    if (!start || !end) return 'N/A'
+    const startDate = new Date(start)
+    const endDate = new Date(end)
+    const durationMs = endDate - startDate
+    const durationMinutes = Math.floor(durationMs / 60000)
+    const hours = Math.floor(durationMinutes / 60)
+    const minutes = durationMinutes % 60
+    return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`
+  }
+
+  const getServiceDisplay = () => {
+    if (booking.services && Array.isArray(booking.services) && booking.services.length > 0) {
+      return booking.services.map((s) => s.name).join(', ')
+    }
+    return booking.service?.name || 'N/A'
+  }
+
+  const getStatusStyle = (status) => {
     const baseStyle = {
-      padding: '8px 16px',
+      padding: '6px 12px',
       borderRadius: '20px',
       fontSize: '14px',
-      fontWeight: '600',
-      textTransform: 'capitalize',
-      display: 'inline-block',
+      fontWeight: '500',
     }
 
     switch (status?.toLowerCase()) {
       case 'confirmed':
-        return { ...baseStyle, backgroundColor: '#dcfce7', color: '#166534' }
+        return { ...baseStyle, backgroundColor: '#D1FAE5', color: '#065F46' }
       case 'pending':
-        return { ...baseStyle, backgroundColor: '#fef3c7', color: '#d97706' }
+        return { ...baseStyle, backgroundColor: '#FEF3C7', color: '#92400E' }
       case 'cancelled':
-        return { ...baseStyle, backgroundColor: '#fee2e2', color: '#dc2626' }
+        return { ...baseStyle, backgroundColor: '#FEE2E2', color: '#991B1B' }
       case 'completed':
-        return { ...baseStyle, backgroundColor: '#e0e7ff', color: '#4338ca' }
+        return { ...baseStyle, backgroundColor: '#DBEAFE', color: '#1E40AF' }
       default:
-        return { ...baseStyle, backgroundColor: '#f3f4f6', color: '#6b7280' }
-    }
-  }
-
-  const formatDateTime = (dateTimeString) => {
-    if (!dateTimeString) return 'N/A'
-    return new Date(dateTimeString).toLocaleString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    })
-  }
-
-  const formatDate = (dateTimeString) => {
-    if (!dateTimeString) return 'N/A'
-    return new Date(dateTimeString).toLocaleDateString('en-US', {
-      weekday: 'long',
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-    })
-  }
-
-  const formatTime = (dateTimeString) => {
-    if (!dateTimeString) return 'N/A'
-    return new Date(dateTimeString).toLocaleTimeString('en-US', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    })
-  }
-
-  const calculateDuration = (startTime, endTime) => {
-    if (!startTime || !endTime) return 'N/A'
-    const start = new Date(startTime)
-    const end = new Date(endTime)
-    const durationMs = end - start
-    const durationMinutes = Math.round(durationMs / (1000 * 60))
-
-    if (durationMinutes >= 60) {
-      const hours = Math.floor(durationMinutes / 60)
-      const minutes = durationMinutes % 60
-      return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`
-    }
-    return `${durationMinutes}m`
-  }
-
-  const handleComplete = async () => {
-    setIsCompleting(true)
-    try {
-      await updateBooking(parseInt(bookingId), { status: 'completed' })
-      await refetch()
-    } catch (error) {
-      console.error('Error completing booking:', error)
-      alert('Failed to complete booking. Please try again.')
-    } finally {
-      setIsCompleting(false)
+        return { ...baseStyle, backgroundColor: '#F3F4F6', color: '#6B7280' }
     }
   }
 
   const handleDelete = async () => {
-    const returnDate = searchParams.get('returnDate')
     setIsDeleting(true)
     try {
-      await deleteBooking(parseInt(bookingId))
-      if (returnDate) {
-        navigate(`/bookings?date=${returnDate}&view=day`)
-      } else {
-        navigate('/bookings')
-      }
+      await deleteBooking(bookingId)
+      navigate('/bookings')
     } catch (error) {
       console.error('Error deleting booking:', error)
       alert('Failed to delete booking. Please try again.')
     } finally {
       setIsDeleting(false)
-      setIsDeleteModalOpen(false)
     }
-  }
-
-  const getServiceDisplay = () => {
-    if (!booking) return 'Service not specified'
-
-    // Handle multiple services from serviceIds
-    if (booking.serviceIds && Array.isArray(booking.serviceIds) && booking.serviceIds.length > 0) {
-      // If we have service names from the query
-      if (Array.isArray(booking.services)) {
-        return booking.services.map((s) => s.name).join(', ')
-      }
-      // Fallback to showing count
-      return `${booking.serviceIds.length} Service${booking.serviceIds.length > 1 ? 's' : ''}`
-    }
-
-    // Handle single service
-    if (booking.services?.name) {
-      return booking.services.name
-    }
-
-    return 'Service not specified'
   }
 
   if (isLoading) return <Spinner />
-
-  if (error) {
-    return (
-      <div style={styles.container}>
-        <div style={styles.errorMessage}>Error loading booking: {error.message}</div>
-      </div>
-    )
-  }
-
-  if (!booking) {
-    return (
-      <div style={styles.container}>
-        <div style={styles.errorMessage}>Booking not found</div>
-      </div>
-    )
-  }
+  if (error) return <div style={styles.error}>Error loading booking details</div>
+  if (!booking) return <div style={styles.error}>Booking not found</div>
 
   return (
     <div style={styles.container}>
       {/* Header */}
-      <div style={styles.header}>
-        <div style={styles.headerLeft}>
+      <div
+        style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          padding: '20px 24px',
+          backgroundColor: 'white',
+          borderBottom: '1px solid #E5E7EB',
+          flexWrap: 'nowrap',
+          gap: '16px',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '16px',
+            flex: '0 1 auto',
+          }}
+        >
           <button
-            onClick={() => {
-              const returnDate = searchParams.get('returnDate')
-
-              if (returnDate) {
-                navigate(`/bookings?date=${returnDate}&view=day`)
-              } else {
-                navigate('/bookings')
-              }
+            onClick={() => navigate('/bookings')}
+            style={{
+              ...styles.backButton,
+              whiteSpace: 'nowrap',
             }}
-            style={styles.backButton}
           >
             ← Back
           </button>
-          <div style={styles.titleSection}>
-            <h1 style={styles.title}>Booking Details</h1>
-            <div style={getStatusBadgeStyle(booking.status)}>{booking.status || 'Confirmed'}</div>
-          </div>
-        </div>
-
-        <div style={styles.headerActions}>
-          <button
-            onClick={handleComplete}
-            disabled={isCompleting || booking.status === 'completed'}
+          <h1
             style={{
-              padding: '12px 20px',
-              backgroundColor: booking.status === 'completed' ? '#9ca3af' : '#16a34a',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: '14px',
-              fontWeight: '600',
-              cursor: isCompleting || booking.status === 'completed' ? 'not-allowed' : 'pointer',
-              transition: 'all 0.2s ease',
-              opacity: isCompleting || booking.status === 'completed' ? 0.7 : 1,
+              ...styles.title,
+              whiteSpace: 'nowrap',
+              margin: 0,
             }}
           >
-            ✓{' '}
-            {isCompleting
-              ? 'Completing...'
-              : booking.status === 'completed'
-              ? 'Completed'
-              : 'Complete'}
+            Booking Details
+          </h1>
+          <div
+            style={{
+              ...getStatusStyle(booking.status),
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {booking.status?.charAt(0).toUpperCase() + booking.status?.slice(1) || 'N/A'}
+          </div>
+        </div>
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            flex: '0 0 auto',
+          }}
+        >
+          <button
+            onClick={() => setIsPaymentModalOpen(true)}
+            style={{
+              ...styles.completeButton,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            ✓ Complete & Pay
           </button>
-          <button onClick={() => setIsEditModalOpen(true)} style={styles.editButton}>
+          <button
+            onClick={() => setIsEditModalOpen(true)}
+            style={{
+              ...styles.editButton,
+              whiteSpace: 'nowrap',
+            }}
+          >
             ✏️ Edit
           </button>
-          <button onClick={() => setIsDeleteModalOpen(true)} style={styles.deleteButton}>
+          <button
+            onClick={() => setIsDeleteModalOpen(true)}
+            style={{
+              ...styles.deleteButton,
+              whiteSpace: 'nowrap',
+            }}
+          >
             🗑️ Delete
           </button>
         </div>
@@ -1049,6 +1529,13 @@ const BookingDetailPage = () => {
         onClose={() => setIsEditModalOpen(false)}
         booking={booking}
         onBookingUpdated={refetch}
+      />
+
+      {/* Payment Modal */}
+      <PaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => setIsPaymentModalOpen(false)}
+        booking={booking}
       />
 
       {/* Delete Confirmation Modal */}
