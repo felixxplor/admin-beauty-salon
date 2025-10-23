@@ -314,18 +314,43 @@ const POSSystem = () => {
 
           {/* Category Tabs */}
           <div style={styles.categoriesWrapper}>
-            {categories.map((category) => (
-              <button
-                key={category}
-                onClick={() => setSelectedCategory(category)}
-                style={{
-                  ...styles.categoryButton,
-                  ...(selectedCategory === category ? styles.categoryButtonActive : {}),
-                }}
-              >
-                {category}
-              </button>
-            ))}
+            {categories.map((category) => {
+              const isActive = selectedCategory === category
+              const isCombo = category.toLowerCase() === 'combo'
+              const isPopular = category.toLowerCase() === 'popular'
+
+              // Determine which styles to apply
+              let buttonStyles = { ...styles.categoryButton }
+
+              if (isCombo) {
+                buttonStyles = {
+                  ...buttonStyles,
+                  ...styles.categoryButtonCombo,
+                  ...(isActive ? styles.categoryButtonComboActive : {}),
+                }
+              } else if (isPopular) {
+                buttonStyles = {
+                  ...buttonStyles,
+                  ...styles.categoryButtonPopular,
+                  ...(isActive ? styles.categoryButtonPopularActive : {}),
+                }
+              } else if (isActive) {
+                buttonStyles = {
+                  ...buttonStyles,
+                  ...styles.categoryButtonActive,
+                }
+              }
+
+              return (
+                <button
+                  key={category}
+                  onClick={() => setSelectedCategory(category)}
+                  style={buttonStyles}
+                >
+                  {category}
+                </button>
+              )
+            })}
           </div>
         </div>
 

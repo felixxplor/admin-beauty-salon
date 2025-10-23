@@ -62,6 +62,28 @@ export const styles = {
     backgroundColor: '#2563EB',
     color: 'white',
   },
+  // Special styling for Combo category button
+  categoryButtonCombo: {
+    backgroundColor: '#FEF08A', // Yellow-200
+    color: '#854D0E', // Yellow-900
+    fontWeight: '600',
+  },
+  categoryButtonComboActive: {
+    backgroundColor: '#FACC15', // Yellow-400
+    color: '#713F12', // Yellow-950
+    fontWeight: '600',
+  },
+  // Special styling for Popular category button
+  categoryButtonPopular: {
+    backgroundColor: '#FEF08A', // Yellow-200
+    color: '#854D0E', // Yellow-900
+    fontWeight: '600',
+  },
+  categoryButtonPopularActive: {
+    backgroundColor: '#FACC15', // Yellow-400
+    color: '#713F12', // Yellow-950
+    fontWeight: '600',
+  },
   productsContainer: {
     flex: '1 1 auto',
     backgroundColor: 'white',
