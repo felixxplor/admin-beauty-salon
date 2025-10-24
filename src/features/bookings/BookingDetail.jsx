@@ -1333,6 +1333,7 @@ const BookingDetailPage = () => {
   const { bookingId } = useParams()
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
+  const returnDate = searchParams.get('returnDate')
   const { booking, isLoading, error, refetch } = useBookingDetail(bookingId)
   const [isEditModalOpen, setIsEditModalOpen] = useState(false)
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false)
@@ -1392,6 +1393,14 @@ const BookingDetailPage = () => {
     })
   }
 
+  const handleBack = () => {
+    if (returnDate) {
+      navigate(`/bookings?date=${returnDate}`)
+    } else {
+      navigate('/bookings')
+    }
+  }
+
   const calculateDuration = (start, end) => {
     if (!start || !end) return 'N/A'
     const startDate = new Date(start)
@@ -1436,7 +1445,12 @@ const BookingDetailPage = () => {
     setIsDeleting(true)
     try {
       await deleteBooking(bookingId)
-      navigate('/bookings')
+      // Navigate back with date if available
+      if (returnDate) {
+        navigate(`/bookings?date=${returnDate}`)
+      } else {
+        navigate('/bookings')
+      }
     } catch (error) {
       console.error('Error deleting booking:', error)
       alert('Failed to delete booking. Please try again.')
@@ -1473,7 +1487,7 @@ const BookingDetailPage = () => {
           }}
         >
           <button
-            onClick={() => navigate('/bookings')}
+            onClick={handleBack}
             style={{
               ...styles.backButton,
               whiteSpace: 'nowrap',

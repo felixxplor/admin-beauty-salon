@@ -265,7 +265,7 @@ const BookingCalendar = () => {
     staffId: '',
     numClients: 1,
     notes: '',
-    status: 'pending',
+    status: 'confirmed',
     serviceStaffAssignments: {},
     createSeparateBookings: false,
   })
@@ -274,7 +274,7 @@ const BookingCalendar = () => {
     const dateParam = searchParams.get('date')
     const viewParam = searchParams.get('view')
 
-    if (dateParam && viewParam === 'day') {
+    if (dateParam) {
       setSelectedDate(dateParam)
       setView('day')
       setSearchParams({})
@@ -889,7 +889,7 @@ const BookingCalendar = () => {
         staffId: '',
         numClients: 1,
         notes: '',
-        status: 'pending',
+        status: 'confirmed',
         serviceStaffAssignments: {},
         createSeparateBookings: false,
       })

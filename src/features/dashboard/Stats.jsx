@@ -42,10 +42,8 @@ function Stats({ bookings, serviceCount }) {
   // 2. Today's bookings (based on startTime)
   const todaysBookings = safeBookings.filter((booking) => isToday(booking.startTime)).length
 
-  // 2a. Today's PENDING bookings
-  const todaysPendingBookings = safeBookings.filter(
-    (booking) => isToday(booking.startTime) && booking.status === 'pending'
-  ).length
+  // 2a. All PENDING bookings (regardless of date)
+  const allPendingBookings = safeBookings.filter((booking) => booking.status === 'pending').length
 
   // 2b. Today's CONFIRMED bookings
   const todaysConfirmedBookings = safeBookings.filter(
@@ -73,10 +71,10 @@ function Stats({ bookings, serviceCount }) {
 
       <Link to="/pending-bookings">
         <Stat
-          title="Today's Pending"
+          title="All Pending"
           color="yellow"
           icon={<HiOutlineClock />}
-          value={todaysPendingBookings}
+          value={allPendingBookings}
         />
       </Link>
 

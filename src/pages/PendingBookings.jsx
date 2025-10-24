@@ -35,7 +35,7 @@ const PendingBookings = () => {
           // Fetch client if clientId exists
           if (booking.clientId) {
             const { data: clientData } = await supabase
-              .from('clients')
+              .from('client') // FIXED: Changed from 'clients' to 'client'
               .select('*')
               .eq('id', booking.clientId)
               .single()
@@ -297,30 +297,30 @@ const PendingBookings = () => {
         )}
       </div>
 
+      {/* Select All */}
+      {filteredBookings.length > 0 && (
+        <div style={styles.selectAllBar}>
+          <label style={styles.selectAllLabel}>
+            <input
+              type="checkbox"
+              checked={selectedBookings.size === filteredBookings.length}
+              onChange={selectAll}
+              style={styles.checkbox}
+            />
+            Select All
+          </label>
+        </div>
+      )}
+
       {/* Bookings List */}
       {filteredBookings.length === 0 ? (
         <div style={styles.emptyState}>
-          <div style={styles.emptyIcon}>📋</div>
-          <h3 style={styles.emptyTitle}>No pending bookings</h3>
-          <p style={styles.emptyText}>
-            All bookings have been confirmed or there are no bookings yet.
-          </p>
+          <div style={styles.emptyIcon}>✅</div>
+          <h2 style={styles.emptyTitle}>All caught up!</h2>
+          <p style={styles.emptyText}>There are no pending bookings at the moment.</p>
         </div>
       ) : (
         <>
-          {/* Select All */}
-          <div style={styles.selectAllBar}>
-            <label style={styles.selectAllLabel}>
-              <input
-                type="checkbox"
-                checked={selectedBookings.size === filteredBookings.length}
-                onChange={selectAll}
-                style={styles.checkbox}
-              />
-              Select All
-            </label>
-          </div>
-
           <div style={styles.bookingsList}>
             {filteredBookings.map((booking) => (
               <div
@@ -330,6 +330,7 @@ const PendingBookings = () => {
                   ...(selectedBookings.has(booking.id) ? styles.bookingCardSelected : {}),
                 }}
               >
+                {/* Booking Header */}
                 <div style={styles.bookingHeader}>
                   <input
                     type="checkbox"
@@ -337,10 +338,12 @@ const PendingBookings = () => {
                     onChange={() => toggleSelection(booking.id)}
                     style={styles.checkbox}
                   />
+
                   <div style={styles.bookingTime}>
                     {isToday(booking.startTime) && <span style={styles.todayBadge}>TODAY</span>}
                     <span style={styles.dateTime}>{formatDateTime(booking.startTime)}</span>
                   </div>
+
                   <div style={styles.actions}>
                     <button
                       onClick={() => confirmBooking(booking.id)}
@@ -361,6 +364,7 @@ const PendingBookings = () => {
                   </div>
                 </div>
 
+                {/* Booking Details */}
                 <div style={styles.bookingBody}>
                   <div style={styles.infoGrid}>
                     <div style={styles.infoItem}>
