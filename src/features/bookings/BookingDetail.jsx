@@ -346,51 +346,189 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
         <form onSubmit={handleSubmit} style={modalStyles.form}>
           {/* Services Selection */}
           <div style={modalStyles.formGroup}>
-            <label style={modalStyles.label}>
+            <label
+              style={{
+                ...modalStyles.label,
+                fontWeight: '500',
+                fontSize: '14px',
+                color: '#000',
+              }}
+            >
               Services <span style={{ color: '#EF4444' }}>*</span>
             </label>
             <input
               type="text"
-              placeholder="Search services..."
+              placeholder="🔍 Search services by name or category..."
               value={serviceSearchTerm}
               onChange={(e) => setServiceSearchTerm(e.target.value)}
-              style={modalStyles.searchInput}
+              style={{
+                ...modalStyles.searchInput,
+                marginBottom: '8px',
+                padding: '10px 12px',
+                fontSize: '14px',
+                border: '2px solid #d1d5db',
+                backgroundColor: 'white',
+              }}
             />
-            <div style={modalStyles.servicesContainer}>
+            <div
+              style={{
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                padding: '8px',
+                maxHeight: '200px',
+                overflowY: 'auto',
+                backgroundColor: 'white',
+              }}
+            >
               {servicesLoading ? (
-                <div style={modalStyles.loadingText}>Loading services...</div>
+                <div
+                  style={{
+                    padding: '16px',
+                    textAlign: 'center',
+                    color: '#666',
+                    fontSize: '14px',
+                  }}
+                >
+                  Loading services...
+                </div>
               ) : filteredServices.length === 0 ? (
-                <div style={modalStyles.emptyText}>No services found</div>
+                <div
+                  style={{
+                    padding: '16px',
+                    textAlign: 'center',
+                    color: '#666',
+                    fontSize: '14px',
+                  }}
+                >
+                  No services found matching &#39;{serviceSearchTerm}&#39;
+                </div>
               ) : (
                 filteredServices.map((service) => (
-                  <label key={service.id} style={modalStyles.serviceItem}>
+                  <label
+                    key={service.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      padding: '8px',
+                      cursor: 'pointer',
+                      borderRadius: '4px',
+                      marginBottom: '4px',
+                      backgroundColor: formData.selectedServiceIds.includes(service.id.toString())
+                        ? '#e0f2fe'
+                        : 'transparent',
+                    }}
+                  >
                     <input
                       type="checkbox"
                       checked={formData.selectedServiceIds.includes(service.id.toString())}
                       onChange={() => handleServiceToggle(service.id)}
-                      style={modalStyles.checkbox}
+                      style={{ marginRight: '8px' }}
                     />
-                    <div style={modalStyles.serviceInfo}>
-                      <div style={modalStyles.serviceName}>{service.name}</div>
-                      <div style={modalStyles.serviceDetails}>
-                        {service.duration} min • ${service.regularPrice}
-                        {service.category && ` • ${service.category}`}
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontWeight: '500', fontSize: '14px', color: '#000' }}>
+                        {service.name}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#666' }}>
+                        {service.category && (
+                          <span
+                            style={{
+                              backgroundColor: '#e5e7eb',
+                              padding: '2px 6px',
+                              borderRadius: '3px',
+                              marginRight: '6px',
+                              fontSize: '11px',
+                            }}
+                          >
+                            {service.category}
+                          </span>
+                        )}
+                        {service.duration} min - $
+                        {(() => {
+                          const regularPriceStr = service.regularPrice
+                            ? String(service.regularPrice)
+                            : '0'
+                          const discountStr = service.discount ? String(service.discount) : '0'
+
+                          const hasPlus = regularPriceStr.includes('+')
+                          const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
+                          const discountNum = parseFloat(discountStr.replace('+', ''))
+
+                          if (isNaN(regularPriceNum)) {
+                            return regularPriceStr
+                          }
+
+                          const finalPrice =
+                            regularPriceNum - (isNaN(discountNum) ? 0 : discountNum)
+
+                          return hasPlus ? `${finalPrice}+` : `${finalPrice}`
+                        })()}
+                        {service.discount > 0 && (
+                          <span
+                            style={{
+                              textDecoration: 'line-through',
+                              marginLeft: '4px',
+                              opacity: 0.7,
+                            }}
+                          >
+                            ${service.regularPrice}
+                          </span>
+                        )}
                       </div>
                     </div>
                   </label>
                 ))
               )}
             </div>
+            {serviceSearchTerm && (
+              <button
+                type="button"
+                onClick={() => setServiceSearchTerm('')}
+                style={{
+                  marginTop: '8px',
+                  padding: '6px 12px',
+                  fontSize: '12px',
+                  color: '#2563eb',
+                  backgroundColor: 'transparent',
+                  border: 'none',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                }}
+              >
+                Clear search
+              </button>
+            )}
             {formData.selectedServiceIds.length > 0 && (
-              <div style={modalStyles.selectedServices}>
+              <div
+                style={{
+                  marginTop: '8px',
+                  padding: '8px',
+                  backgroundColor: '#f0f9ff',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                }}
+              >
                 <strong>Selected:</strong> {selectedServicesInfo.serviceNames.join(', ')}
-                <div style={modalStyles.serviceSummary}>
+                <div
+                  style={{
+                    marginTop: '4px',
+                  }}
+                >
                   Duration: {selectedServicesInfo.totalDuration} min • Total: $
                   {selectedServicesInfo.totalPrice}
                 </div>
               </div>
             )}
-            {formErrors.services && <div style={modalStyles.errorText}>{formErrors.services}</div>}
+            {formErrors.services && (
+              <div
+                style={{
+                  color: '#EF4444',
+                  fontSize: '12px',
+                  marginTop: '8px',
+                }}
+              >
+                {formErrors.services}
+              </div>
+            )}
           </div>
 
           {/* Staff Selection */}

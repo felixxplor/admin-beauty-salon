@@ -1153,7 +1153,7 @@ const BookingCalendar = () => {
               <div
                 style={{
                   position: 'absolute',
-                  top: `${currentTimePosition + 70}px`,
+                  top: `${currentTimePosition + 125}px`,
                   left: 0,
                   right: 0,
                   height: '2px',
