@@ -200,15 +200,28 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
 
   useEffect(() => {
     if (booking && services) {
-      const toLocalDateTimeString = (dateString) => {
-        if (!dateString) return ''
-        const date = new Date(dateString)
-        const year = date.getFullYear()
-        const month = String(date.getMonth() + 1).padStart(2, '0')
-        const day = String(date.getDate()).padStart(2, '0')
-        const hours = String(date.getHours()).padStart(2, '0')
-        const minutes = String(date.getMinutes()).padStart(2, '0')
-        return `${year}-${month}-${day}T${hours}:${minutes}`
+      const toLocalDateTimeString = (timestamp) => {
+        if (!timestamp) return ''
+
+        // Parse "YYYY-MM-DD HH:MM:SS" manually - NO timezone conversion!
+        const match = timestamp.match(/(\d{4})-(\d{2})-(\d{2})\s+(\d{2}):(\d{2}):(\d{2})/)
+
+        if (match) {
+          const [_, year, month, day, hours, minutes] = match
+          return `${year}-${month}-${day}T${hours}:${minutes}`
+        }
+
+        // Fallback
+        const dateMatch = timestamp.match(/(\d{4})-(\d{2})-(\d{2})/)
+        const timeMatch = timestamp.match(/(\d{2}):(\d{2})/)
+
+        if (dateMatch && timeMatch) {
+          const [_, year, month, day] = dateMatch
+          const [__, hours, minutes] = timeMatch
+          return `${year}-${month}-${day}T${hours}:${minutes}`
+        }
+
+        return ''
       }
 
       // Determine selected service IDs
@@ -287,12 +300,21 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
     setIsSubmitting(true)
 
     try {
+      // Parse the datetime-local value: YYYY-MM-DDTHH:MM
+      const [startDatePart, startTimePart] = formData.startTime.split('T')
+      const [endDatePart, endTimePart] = formData.endTime.split('T')
+
+      // Create timestamps in format: YYYY-MM-DD HH:MM:SS
+      const startTimestamp = `${startDatePart} ${startTimePart}:00`
+      const endTimestamp = `${endDatePart} ${endTimePart}:00`
+
       const updateData = {
         numClients: parseInt(formData.numClients),
         status: formData.status,
         notes: formData.notes,
-        startTime: new Date(formData.startTime).toISOString(),
-        endTime: new Date(formData.endTime).toISOString(),
+        date: startDatePart, // Use the date from startTime
+        startTime: startTimestamp,
+        endTime: endTimestamp,
         totalPrice: formData.totalPrice,
         serviceIds: formData.selectedServiceIds.map((id) => parseInt(id)),
         staffId: parseInt(formData.staffId),
