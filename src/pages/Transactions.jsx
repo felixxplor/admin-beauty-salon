@@ -13,6 +13,8 @@ import {
   Filter,
   Download,
   LogOut,
+  User,
+  Phone,
 } from 'lucide-react'
 import supabase from '../services/supabase'
 import PinProtection from '../ui/PinProtection'
@@ -25,6 +27,9 @@ const Transactions = () => {
   const [expandedTransaction, setExpandedTransaction] = useState(null)
   const [activeTab, setActiveTab] = useState('transactions')
   const [filterPaymentMethod, setFilterPaymentMethod] = useState('all')
+  const [filterStaff, setFilterStaff] = useState('all')
+  const [staffList, setStaffList] = useState([])
+  const [staffLoading, setStaffLoading] = useState(true)
 
   // Timezone utility functions
   function getTodaySydney() {
@@ -78,6 +83,29 @@ const Transactions = () => {
     loadData()
   }, [selectedDate])
 
+  useEffect(() => {
+    fetchStaff()
+  }, [])
+
+  const fetchStaff = async () => {
+    try {
+      const { data, error } = await supabase.from('staff').select('id, name').order('name')
+
+      if (error) throw error
+      setStaffList(data || [])
+    } catch (error) {
+      console.error('Error fetching staff:', error)
+    } finally {
+      setStaffLoading(false)
+    }
+  }
+
+  const getStaffName = (staffId) => {
+    if (!staffId) return 'N/A'
+    const staff = staffList.find((s) => s.id === staffId)
+    return staff ? staff.name : 'Unknown'
+  }
+
   const loadData = async () => {
     setLoading(true)
     try {
@@ -95,7 +123,7 @@ const Transactions = () => {
 
     const { data, error } = await supabase
       .from('transactions')
-      .select('*')
+      .select('*, staff')
       .gte('timestamp', startOfDay)
       .lte('timestamp', endOfDay)
       .order('timestamp', { ascending: false })
@@ -150,21 +178,27 @@ const Transactions = () => {
     })
   }
 
-  const filteredTransactions =
-    filterPaymentMethod === 'all'
-      ? transactions
-      : transactions.filter((t) => t.payment_method === filterPaymentMethod)
+  const filteredTransactions = transactions.filter((t) => {
+    const matchesPaymentMethod =
+      filterPaymentMethod === 'all' || t.payment_method === filterPaymentMethod
+    const matchesStaff = filterStaff === 'all' || t.staff === parseInt(filterStaff)
+    return matchesPaymentMethod && matchesStaff
+  })
 
   const dailyStats = {
     totalTransactions: filteredTransactions.length,
     totalRevenue: filteredTransactions.reduce((sum, t) => sum + parseFloat(t.total), 0),
     cashTransactions: filteredTransactions.filter((t) => t.payment_method === 'cash').length,
     cardTransactions: filteredTransactions.filter((t) => t.payment_method === 'card').length,
+    payidTransactions: filteredTransactions.filter((t) => t.payment_method === 'payid').length,
     totalCash: filteredTransactions
       .filter((t) => t.payment_method === 'cash')
       .reduce((sum, t) => sum + parseFloat(t.total), 0),
     totalCard: filteredTransactions
       .filter((t) => t.payment_method === 'card')
+      .reduce((sum, t) => sum + parseFloat(t.total), 0),
+    totalPayID: filteredTransactions
+      .filter((t) => t.payment_method === 'payid')
       .reduce((sum, t) => sum + parseFloat(t.total), 0),
     totalDiscounts: filteredTransactions.reduce(
       (sum, t) => sum + parseFloat(t.discount_amount || 0),
@@ -180,6 +214,7 @@ const Transactions = () => {
     const csvData = filteredTransactions.map((t) => ({
       Time: formatTime(t.timestamp),
       'Payment Method': t.payment_method,
+      Staff: getStaffName(t.staff),
       Subtotal: t.subtotal,
       'Discount Amount': t.discount_amount || 0,
       Total: t.total,
@@ -277,6 +312,17 @@ const Transactions = () => {
               <p style={styles.statSubtext}>{dailyStats.cardTransactions} transactions</p>
             </div>
           </div>
+
+          <div style={styles.statCard}>
+            <div style={styles.statIcon}>
+              <Phone size={24} color="#EC4899" />
+            </div>
+            <div style={styles.statContent}>
+              <p style={styles.statLabel}>PayID Sales</p>
+              <p style={styles.statValue}>${dailyStats.totalPayID.toFixed(2)}</p>
+              <p style={styles.statSubtext}>{dailyStats.payidTransactions} transactions</p>
+            </div>
+          </div>
         </div>
 
         {/* Tabs */}
@@ -318,6 +364,21 @@ const Transactions = () => {
                   <option value="all">All Payment Methods</option>
                   <option value="cash">Cash Only</option>
                   <option value="card">Card Only</option>
+                  <option value="payid">PayID Only</option>
+                </select>
+
+                <select
+                  value={filterStaff}
+                  onChange={(e) => setFilterStaff(e.target.value)}
+                  style={styles.filterSelect}
+                  disabled={staffLoading}
+                >
+                  <option value="all">All Staff</option>
+                  {staffList.map((staff) => (
+                    <option key={staff.id} value={staff.id}>
+                      {staff.name}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -356,12 +417,29 @@ const Transactions = () => {
                               <Banknote size={16} />
                               <span style={{ marginLeft: '4px' }}>Cash</span>
                             </>
+                          ) : transaction.payment_method === 'payid' ? (
+                            <>
+                              <Phone size={16} />
+                              <span style={{ marginLeft: '4px' }}>PayID</span>
+                            </>
                           ) : (
                             <>
                               <CreditCard size={16} />
                               <span style={{ marginLeft: '4px' }}>Card</span>
                             </>
                           )}
+                        </div>
+                        <div
+                          style={{
+                            ...styles.paymentMethodBadge,
+                            backgroundColor: '#EEF2FF',
+                            color: '#4F46E5',
+                          }}
+                        >
+                          <User size={16} />
+                          <span style={{ marginLeft: '4px' }}>
+                            {staffLoading ? '...' : getStaffName(transaction.staff)}
+                          </span>
                         </div>
                       </div>
 
@@ -424,6 +502,13 @@ const Transactions = () => {
                               </div>
                             </>
                           )}
+
+                          <div style={styles.detailItem}>
+                            <span style={styles.detailLabel}>Staff Member:</span>
+                            <span style={styles.detailValue}>
+                              {staffLoading ? 'Loading...' : getStaffName(transaction.staff)}
+                            </span>
+                          </div>
 
                           {transaction.notes && (
                             <div style={{ ...styles.detailItem, gridColumn: '1 / -1' }}>

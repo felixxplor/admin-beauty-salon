@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   ShoppingCart,
   Trash2,
@@ -12,6 +12,8 @@ import {
   Package,
   Unplug,
   DoorOpen,
+  User,
+  Phone,
 } from 'lucide-react'
 import { useServices } from '../features/services/useServices'
 import Spinner from '../ui/Spinner'
@@ -32,6 +34,28 @@ const POSSystem = () => {
   const [serialPort, setSerialPort] = useState(null)
   const [cartDiscount, setCartDiscount] = useState('')
   const [discountType, setDiscountType] = useState('amount') // 'amount' or 'percentage'
+  const [selectedStaff, setSelectedStaff] = useState(null)
+  const [staffList, setStaffList] = useState([])
+  const [staffLoading, setStaffLoading] = useState(true)
+
+  // Fetch staff list on component mount
+  useEffect(() => {
+    const fetchStaff = async () => {
+      try {
+        const { data, error } = await supabase.from('staff').select('id, name').order('name')
+
+        if (error) throw error
+        setStaffList(data || [])
+      } catch (error) {
+        console.error('Error fetching staff:', error)
+        setMessage({ type: 'error', text: 'Failed to load staff list' })
+      } finally {
+        setStaffLoading(false)
+      }
+    }
+
+    fetchStaff()
+  }, [])
 
   if (isLoading) return <Spinner />
   if (!services || !services.length) return <Empty resourceName="services" />
@@ -215,6 +239,7 @@ const POSSystem = () => {
       change_given: paymentMethod === 'cash' ? parseFloat(cashReceived) - total : null,
       timestamp: new Date().toISOString(),
       user_id: 'current_user_id',
+      staff: selectedStaff,
     }
 
     const { error } = await supabase.from('transactions').insert([transactionData])
@@ -242,6 +267,13 @@ const POSSystem = () => {
   }
 
   const processPayment = async () => {
+    // Validate staff is selected
+    if (!selectedStaff) {
+      setMessage({ type: 'error', text: 'Please select a staff member' })
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000)
+      return
+    }
+
     if (paymentMethod === 'cash') {
       const received = parseFloat(cashReceived)
       if (!received || received < total) {
@@ -362,7 +394,13 @@ const POSSystem = () => {
               <p style={styles.emptyStateText}>No services found</p>
             </div>
           ) : (
-            <div style={styles.productsGrid}>
+            <div
+              style={{
+                ...styles.productsGrid,
+                gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+                gap: '10px',
+              }}
+            >
               {filteredServices.map((service) => {
                 const regularPrice = parseFloat(service.regularPrice) || 0
                 const discount = service.discount || 0
@@ -372,20 +410,36 @@ const POSSystem = () => {
                   <div
                     key={service.id}
                     onClick={() => addToCart(service)}
-                    style={styles.productCard}
+                    style={{
+                      ...styles.productCard,
+                      padding: '10px',
+                      gap: '4px',
+                    }}
                   >
-                    {discount > 0 && <div style={styles.discountBadge}>-${discount}</div>}
+                    {discount > 0 && (
+                      <div
+                        style={{
+                          ...styles.discountBadge,
+                          top: '6px',
+                          right: '6px',
+                          padding: '2px 6px',
+                          fontSize: '10px',
+                        }}
+                      >
+                        -${discount}
+                      </div>
+                    )}
                     {service.popular && (
                       <div
                         style={{
                           position: 'absolute',
-                          top: '8px',
-                          left: '8px',
+                          top: '6px',
+                          left: '6px',
                           backgroundColor: '#FBBF24',
                           color: '#78350F',
-                          padding: '4px 8px',
+                          padding: '3px 6px',
                           borderRadius: '4px',
-                          fontSize: '11px',
+                          fontSize: '10px',
                           fontWeight: 'bold',
                         }}
                       >
@@ -393,8 +447,9 @@ const POSSystem = () => {
                       </div>
                     )}
 
-                    <h3 style={styles.productName}>{service.name}</h3>
-                    <p style={styles.productDuration}>{service.duration} min</p>
+                    <h3 style={{ ...styles.productName, fontSize: '13px', marginBottom: '2px' }}>
+                      {service.name}
+                    </h3>
 
                     <div style={styles.priceContainer}>
                       {service.isPOA ? (
@@ -402,9 +457,9 @@ const POSSystem = () => {
                           style={{
                             backgroundColor: '#DBEAFE',
                             color: '#1E40AF',
-                            padding: '4px 8px',
+                            padding: '3px 6px',
                             borderRadius: '4px',
-                            fontSize: '12px',
+                            fontSize: '11px',
                             fontWeight: 'bold',
                           }}
                         >
@@ -413,9 +468,13 @@ const POSSystem = () => {
                       ) : (
                         <>
                           {discount > 0 && (
-                            <span style={styles.originalPrice}>${regularPrice.toFixed(2)}</span>
+                            <span style={{ ...styles.originalPrice, fontSize: '11px' }}>
+                              ${regularPrice.toFixed(2)}
+                            </span>
                           )}
-                          <span style={styles.productPrice}>${finalPrice.toFixed(2)}</span>
+                          <span style={{ ...styles.productPrice, fontSize: '14px' }}>
+                            ${finalPrice.toFixed(2)}
+                          </span>
                         </>
                       )}
                     </div>
@@ -489,6 +548,44 @@ const POSSystem = () => {
               </button>
             )}
           </div>
+
+          {/* Staff Selection */}
+          <div style={{ marginTop: '12px' }}>
+            <select
+              id="staff-select"
+              value={selectedStaff || ''}
+              onChange={(e) => setSelectedStaff(e.target.value ? parseInt(e.target.value) : null)}
+              style={{
+                width: '100%',
+                padding: '8px 10px',
+                fontSize: '13px',
+                border: !selectedStaff ? '2px solid #EF4444' : '1px solid #D1D5DB',
+                borderRadius: '6px',
+                backgroundColor: '#fff',
+                cursor: 'pointer',
+              }}
+              disabled={staffLoading}
+            >
+              <option value="">{staffLoading ? 'Loading staff...' : 'Select Staff Member'}</option>
+              {staffList.map((staff) => (
+                <option key={staff.id} value={staff.id}>
+                  {staff.name}
+                </option>
+              ))}
+            </select>
+            {!selectedStaff && (
+              <p
+                style={{
+                  fontSize: '11px',
+                  color: '#EF4444',
+                  marginTop: '4px',
+                  marginBottom: '0',
+                }}
+              >
+                Required for checkout
+              </p>
+            )}
+          </div>
         </div>
 
         {/* Cart Items */}
@@ -503,24 +600,24 @@ const POSSystem = () => {
               {cart.map((item) => {
                 const itemPrice = getServicePrice(item)
                 return (
-                  <div key={item.id} style={styles.cartItem}>
+                  <div key={item.id} style={{ ...styles.cartItem, padding: '10px' }}>
                     <div style={styles.cartItemHeader}>
                       <div style={styles.cartItemInfo}>
-                        <h3 style={styles.cartItemName}>{item.name}</h3>
+                        <h3 style={{ ...styles.cartItemName, fontSize: '13px' }}>{item.name}</h3>
                         {item.isPOA ? (
-                          <div style={{ marginTop: '8px' }}>
+                          <div style={{ marginTop: '6px' }}>
                             <label
                               style={{
-                                fontSize: '12px',
+                                fontSize: '11px',
                                 color: '#6B7280',
                                 display: 'block',
-                                marginBottom: '4px',
+                                marginBottom: '3px',
                               }}
                             >
                               Enter Price:
                             </label>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                              <DollarSign size={16} color="#6B7280" />
+                              <DollarSign size={14} color="#6B7280" />
                               <input
                                 type="number"
                                 step="0.01"
@@ -528,47 +625,63 @@ const POSSystem = () => {
                                 onChange={(e) => updateCustomPrice(item.id, e.target.value)}
                                 placeholder="0.00"
                                 style={{
-                                  padding: '6px 8px',
+                                  padding: '4px 6px',
                                   border: '1px solid #D1D5DB',
-                                  borderRadius: '6px',
-                                  fontSize: '14px',
-                                  width: '100px',
+                                  borderRadius: '4px',
+                                  fontSize: '13px',
+                                  width: '90px',
                                 }}
                               />
                             </div>
                           </div>
                         ) : (
                           <div style={styles.cartItemDetails}>
-                            <p style={styles.cartItemPrice}>${itemPrice.toFixed(2)}</p>
+                            <p style={{ ...styles.cartItemPrice, fontSize: '14px' }}>
+                              ${itemPrice.toFixed(2)}
+                            </p>
                             {item.discount > 0 && (
-                              <span style={styles.smallDiscountBadge}>-${item.discount}</span>
+                              <span
+                                style={{
+                                  ...styles.smallDiscountBadge,
+                                  fontSize: '10px',
+                                  padding: '2px 4px',
+                                }}
+                              >
+                                -${item.discount}
+                              </span>
                             )}
                           </div>
                         )}
-                        <p style={styles.cartItemDuration}>{item.duration} min</p>
                       </div>
-                      <button onClick={() => removeFromCart(item.id)} style={styles.removeButton}>
-                        <Trash2 size={18} />
+                      <button
+                        onClick={() => removeFromCart(item.id)}
+                        style={{ ...styles.removeButton, padding: '4px' }}
+                      >
+                        <Trash2 size={16} />
                       </button>
                     </div>
 
-                    <div style={styles.cartItemFooter}>
+                    <div style={{ ...styles.cartItemFooter, marginTop: '6px' }}>
                       <div style={styles.quantityControls}>
                         <button
                           onClick={() => updateQuantity(item.id, -1)}
-                          style={styles.quantityButton}
+                          style={{ ...styles.quantityButton, padding: '4px 8px' }}
                         >
-                          <Minus size={16} />
+                          <Minus size={14} />
                         </button>
-                        <span style={styles.quantity}>{item.quantity}</span>
+                        <span style={{ ...styles.quantity, fontSize: '13px' }}>
+                          {item.quantity}
+                        </span>
                         <button
                           onClick={() => updateQuantity(item.id, 1)}
-                          style={styles.quantityButton}
+                          style={{ ...styles.quantityButton, padding: '4px 8px' }}
                         >
-                          <Plus size={16} />
+                          <Plus size={14} />
                         </button>
                       </div>
-                      <div style={styles.itemTotal}>${(itemPrice * item.quantity).toFixed(2)}</div>
+                      <div style={{ ...styles.itemTotal, fontSize: '15px', fontWeight: 'bold' }}>
+                        ${(itemPrice * item.quantity).toFixed(2)}
+                      </div>
                     </div>
                   </div>
                 )
@@ -581,23 +694,12 @@ const POSSystem = () => {
         {cart.length > 0 && (
           <div style={styles.totalsContainer}>
             {/* Discount Input Section */}
+            {/* Discount Section */}
             <div style={{ marginBottom: '12px' }}>
-              <label
-                style={{
-                  fontSize: '13px',
-                  fontWeight: '500',
-                  color: '#374151',
-                  display: 'block',
-                  marginBottom: '8px',
-                }}
-              >
-                Add Discount (Optional)
-              </label>
-
               {/* Discount Type Toggle */}
               <div
                 style={{
-                  display: 'flex',
+                  display: 'none',
                   gap: '8px',
                   marginBottom: '8px',
                 }}
@@ -739,7 +841,15 @@ const POSSystem = () => {
               <span>${total.toFixed(2)}</span>
             </div>
 
-            <button onClick={() => setShowPayment(true)} style={styles.checkoutButton}>
+            <button
+              onClick={() => setShowPayment(true)}
+              disabled={!selectedStaff}
+              style={{
+                ...styles.checkoutButton,
+                opacity: !selectedStaff ? 0.5 : 1,
+                cursor: !selectedStaff ? 'not-allowed' : 'pointer',
+              }}
+            >
               Proceed to Payment
             </button>
           </div>
@@ -824,6 +934,16 @@ const POSSystem = () => {
                 >
                   <CreditCard style={{ margin: '0 auto 8px' }} size={32} />
                   <p style={styles.paymentMethodLabel}>Card</p>
+                </button>
+                <button
+                  onClick={() => setPaymentMethod('payid')}
+                  style={{
+                    ...styles.paymentMethodButton,
+                    ...(paymentMethod === 'payid' ? styles.paymentMethodButtonActive : {}),
+                  }}
+                >
+                  <Phone style={{ margin: '0 auto 8px' }} size={32} />
+                  <p style={styles.paymentMethodLabel}>PayID</p>
                 </button>
               </div>
             </div>
