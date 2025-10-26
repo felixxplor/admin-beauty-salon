@@ -33,9 +33,21 @@ const Transactions = () => {
 
   // Timezone utility functions
   function getTodaySydney() {
+    // Get current date/time in Sydney timezone
     const now = new Date()
-    const sydneyDate = new Date(now.toLocaleString('en-US', { timeZone: 'Australia/Sydney' }))
-    return sydneyDate.toISOString().split('T')[0]
+    const formatter = new Intl.DateTimeFormat('en-AU', {
+      timeZone: 'Australia/Sydney',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    })
+
+    const parts = formatter.formatToParts(now)
+    const year = parts.find((p) => p.type === 'year').value
+    const month = parts.find((p) => p.type === 'month').value
+    const day = parts.find((p) => p.type === 'day').value
+
+    return `${year}-${month}-${day}`
   }
 
   function getStartOfDaySydney(dateString) {

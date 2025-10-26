@@ -284,6 +284,7 @@ const POSSystem = () => {
 
     setIsProcessing(true)
     setMessage({ type: '', text: '' })
+    setShowPayment(false) // Close modal immediately
 
     try {
       await logTransaction()
@@ -305,7 +306,7 @@ const POSSystem = () => {
         setCashReceived('')
         setCartDiscount('')
         setDiscountType('amount')
-        setShowPayment(false)
+        setSelectedStaff(null)
         setMessage({ type: '', text: '' })
       }, 2000)
     } catch (error) {
@@ -453,17 +454,8 @@ const POSSystem = () => {
 
                     <div style={styles.priceContainer}>
                       {service.isPOA ? (
-                        <span
-                          style={{
-                            backgroundColor: '#DBEAFE',
-                            color: '#1E40AF',
-                            padding: '3px 6px',
-                            borderRadius: '4px',
-                            fontSize: '11px',
-                            fontWeight: 'bold',
-                          }}
-                        >
-                          POA
+                        <span style={{ ...styles.productPrice, fontSize: '14px' }}>
+                          ${finalPrice.toFixed(2)}
                         </span>
                       ) : (
                         <>
@@ -769,7 +761,7 @@ const POSSystem = () => {
                   step="0.01"
                   value={cartDiscount}
                   onChange={(e) => setCartDiscount(e.target.value)}
-                  placeholder={discountType === 'amount' ? '0.00' : '0'}
+                  placeholder={discountType === 'amount' ? 'Discount' : '0'}
                   style={{
                     width: '100%',
                     paddingLeft: '32px',
