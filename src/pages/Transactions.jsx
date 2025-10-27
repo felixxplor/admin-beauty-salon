@@ -270,7 +270,6 @@ const Transactions = () => {
                 value={selectedDate}
                 onChange={(e) => setSelectedDate(e.target.value)}
                 style={styles.dateInput}
-                max={getTodaySydney()}
               />
             </div>
 
