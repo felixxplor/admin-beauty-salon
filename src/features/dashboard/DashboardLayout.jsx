@@ -6,7 +6,6 @@ import Stats from './Stats'
 import { useServices } from '../services/useServices'
 import SalesChart from './SalesChart'
 import DurationChart from './DurationChart'
-import TodayActivity from '../check-in-out/TodayActivity'
 import { getBookings } from '../../services/apiBookings'
 import { useBookings } from '../bookings/useBookings'
 

@@ -775,6 +775,7 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
         change_given: paymentMethod === 'cash' ? change : null,
         timestamp: new Date().toISOString(),
         user_id: 'current_user_id', // Replace with actual user ID
+        staff: booking.staffId, // Add staff ID to transaction
         notes: `Payment for booking #${booking.id} - Client: ${
           booking?.client?.fullName ||
           booking?.client?.email ||
@@ -782,7 +783,7 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
           booking?.name ||
           booking?.phone ||
           'N/A'
-        }`,
+        }${booking.staff?.name ? ` - Staff: ${booking.staff.name}` : ''}`,
       }
 
       const { error: transactionError } = await supabase
@@ -805,6 +806,8 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
             metadata: {
               booking_id: booking.id,
               payment_method: paymentMethod,
+              staff_id: booking.staffId,
+              staff_name: booking.staff?.name,
             },
           },
         ])
@@ -813,6 +816,7 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
       // Update booking status to completed
       await updateBooking(booking.id, {
         status: 'completed',
+        staffId: booking.staffId, // Include staff information
       })
 
       setMessage({ type: 'success', text: 'Payment completed successfully!' })

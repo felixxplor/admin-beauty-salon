@@ -83,6 +83,12 @@ function MainNav() {
           </StyledLink>
         </li>
         <li>
+          <StyledLink to="/vouchers">
+            <HiOutlineCalendarDays />
+            <span>Vouchers</span>
+          </StyledLink>
+        </li>
+        <li>
           <StyledLink to="/services">
             <HiOutlineHomeModern />
             <span>Services</span>
