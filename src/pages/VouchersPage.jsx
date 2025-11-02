@@ -91,8 +91,339 @@ const useStaff = () => {
   return { staff, isLoading }
 }
 
+// Payment Modal for Vouchers
+const VoucherPaymentModal = ({
+  isOpen,
+  onClose,
+  voucherData,
+  onSuccess,
+  serialPort,
+  setSerialPort,
+}) => {
+  const [paymentMethod, setPaymentMethod] = useState('cash')
+  const [cashReceived, setCashReceived] = useState('')
+  const [message, setMessage] = useState({ type: '', text: '' })
+  const [isProcessing, setIsProcessing] = useState(false)
+
+  const totalAmount = parseFloat(voucherData?.amount || 0)
+  const change =
+    paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - totalAmount : 0
+
+  useEffect(() => {
+    if (isOpen) {
+      setCashReceived('')
+      setMessage({ type: '', text: '' })
+      setPaymentMethod('cash')
+    }
+  }, [isOpen])
+
+  const openCashDrawer = async () => {
+    try {
+      let port = serialPort
+
+      if (!port) {
+        port = await navigator.serial.requestPort()
+        setSerialPort(port)
+      }
+
+      if (!port.readable || !port.writable) {
+        await port.open({ baudRate: 9600 })
+      }
+
+      const writer = port.writable.getWriter()
+      const command = new Uint8Array([27, 112, 0, 25, 250])
+
+      await writer.write(command)
+      writer.releaseLock()
+
+      return { success: true }
+    } catch (error) {
+      console.error('Cash drawer error:', error)
+      setSerialPort(null)
+      return { success: false, error: error.message }
+    }
+  }
+
+  const processPayment = async () => {
+    if (paymentMethod === 'cash') {
+      const received = parseFloat(cashReceived)
+      if (!received || received < totalAmount) {
+        setMessage({ type: 'error', text: 'Insufficient cash received' })
+        setTimeout(() => setMessage({ type: '', text: '' }), 3000)
+        return
+      }
+    }
+
+    setIsProcessing(true)
+
+    try {
+      // Open cash drawer for cash payments
+      if (paymentMethod === 'cash') {
+        const drawerResult = await openCashDrawer()
+        if (!drawerResult.success) {
+          console.error('Failed to open cash drawer:', drawerResult.error)
+        }
+      }
+
+      // Create the voucher first
+      const newVoucher = await createVoucher({
+        code: voucherData.code,
+        clientId: voucherData.clientId || null,
+        amount: voucherData.amount,
+        notes: voucherData.notes || '',
+        issuedBy: voucherData.staffId,
+      })
+
+      if (!newVoucher) {
+        throw new Error('Failed to create voucher')
+      }
+
+      // Log transaction
+      const transactionData = {
+        items: [
+          {
+            name: `Gift Voucher ${voucherData.code}`,
+            quantity: 1,
+            regularPrice: totalAmount,
+          },
+        ],
+        subtotal: totalAmount,
+        discount_type: null,
+        discount_value: 0,
+        discount_amount: 0,
+        total: totalAmount,
+        payment_method: paymentMethod,
+        cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : null,
+        change_given: paymentMethod === 'cash' ? change : null,
+        timestamp: new Date().toISOString(),
+        user_id: 'current_user_id',
+        staff: voucherData.staffId,
+        notes: `Voucher purchase - Code: ${voucherData.code}${
+          voucherData.clientName ? ` - Client: ${voucherData.clientName}` : ''
+        }${voucherData.staffName ? ` - Staff: ${voucherData.staffName}` : ''}`,
+      }
+
+      const { error: transactionError } = await supabase
+        .from('transactions')
+        .insert([transactionData])
+
+      if (transactionError) {
+        console.error('Transaction logging error:', transactionError)
+      }
+
+      // Log cash drawer
+      if (paymentMethod === 'cash') {
+        await supabase.from('cash_drawer_logs').insert([
+          {
+            action: 'drawer_opened',
+            user_id: 'current_user_id',
+            timestamp: new Date().toISOString(),
+            amount: totalAmount,
+            status: 'success',
+            metadata: {
+              voucher_id: newVoucher.id,
+              voucher_code: voucherData.code,
+              payment_method: paymentMethod,
+              staff_id: voucherData.staffId,
+              staff_name: voucherData.staffName,
+            },
+          },
+        ])
+      }
+
+      // Update voucher with payment info
+      await updateVoucher(newVoucher.id, {
+        clientId: voucherData.clientId || null,
+        notes: `${
+          voucherData.notes || ''
+        } [Paid ${paymentMethod} - ${new Date().toLocaleDateString()}]`.trim(),
+        status: 'active',
+      })
+
+      setMessage({ type: 'success', text: 'Payment completed successfully!' })
+
+      setTimeout(() => {
+        onSuccess()
+        onClose()
+      }, 1500)
+    } catch (error) {
+      console.error('Payment error:', error)
+      setMessage({ type: 'error', text: error.message || 'Payment failed. Please try again.' })
+    } finally {
+      setIsProcessing(false)
+    }
+  }
+
+  if (!isOpen) return null
+
+  return (
+    <div style={modalStyles.overlay} onClick={onClose}>
+      <div style={{ ...modalStyles.modal, maxWidth: '500px' }} onClick={(e) => e.stopPropagation()}>
+        <div style={modalStyles.modalHeader}>
+          <h2 style={modalStyles.modalTitle}>Complete Payment</h2>
+          {serialPort && (
+            <div
+              style={{
+                fontSize: '12px',
+                color: '#10B981',
+                fontWeight: '500',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '4px',
+                backgroundColor: '#ECFDF5',
+                padding: '4px 8px',
+                borderRadius: '4px',
+              }}
+            >
+              <span style={{ fontSize: '10px' }}>🟢</span> Drawer Connected
+            </div>
+          )}
+        </div>
+
+        {message.text && (
+          <div
+            style={
+              message.type === 'success' ? modalStyles.successMessage : modalStyles.errorMessage
+            }
+          >
+            {message.text}
+          </div>
+        )}
+
+        {/* Voucher Summary */}
+        <div
+          style={{
+            marginBottom: '24px',
+            padding: '16px',
+            backgroundColor: '#f9fafb',
+            borderRadius: '8px',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <span style={{ color: '#6b7280' }}>Voucher Code:</span>
+            <span style={{ fontWeight: '600', fontFamily: 'monospace' }}>{voucherData?.code}</span>
+          </div>
+          {voucherData?.clientName && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <span style={{ color: '#6b7280' }}>Client:</span>
+              <span style={{ fontWeight: '500' }}>{voucherData.clientName}</span>
+            </div>
+          )}
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+            <span style={{ color: '#6b7280' }}>Staff:</span>
+            <span style={{ fontWeight: '500' }}>{voucherData?.staffName}</span>
+          </div>
+        </div>
+
+        {/* Total Amount */}
+        <div
+          style={{
+            marginBottom: '24px',
+            padding: '20px',
+            backgroundColor: '#eff6ff',
+            borderRadius: '8px',
+            border: '2px solid #3b82f6',
+          }}
+        >
+          <div style={{ fontSize: '14px', color: '#1e40af', marginBottom: '4px' }}>
+            Total Amount
+          </div>
+          <div style={{ fontSize: '32px', fontWeight: '700', color: '#1e40af' }}>
+            ${totalAmount.toFixed(2)}
+          </div>
+        </div>
+
+        {/* Payment Method Selection */}
+        <div style={modalStyles.formGroup}>
+          <label style={modalStyles.label}>Payment Method</label>
+          <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
+            {['cash', 'card', 'eftpos'].map((method) => (
+              <button
+                key={method}
+                type="button"
+                onClick={() => setPaymentMethod(method)}
+                style={{
+                  flex: 1,
+                  padding: '12px',
+                  border: paymentMethod === method ? '2px solid #007bff' : '2px solid #e5e7eb',
+                  backgroundColor: paymentMethod === method ? '#eff6ff' : 'white',
+                  borderRadius: '8px',
+                  cursor: 'pointer',
+                  fontSize: '14px',
+                  fontWeight: paymentMethod === method ? '600' : '500',
+                  color: paymentMethod === method ? '#007bff' : '#374151',
+                  transition: 'all 0.2s',
+                }}
+              >
+                {method === 'cash' && '💵 Cash'}
+                {method === 'card' && '💳 Card'}
+                {method === 'eftpos' && '💰 EFTPOS'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Cash Amount Input */}
+        {paymentMethod === 'cash' && (
+          <div style={modalStyles.formGroup}>
+            <label style={modalStyles.label}>Cash Received ($)</label>
+            <input
+              type="number"
+              step="0.01"
+              min={totalAmount}
+              value={cashReceived}
+              onChange={(e) => setCashReceived(e.target.value)}
+              style={modalStyles.input}
+              placeholder="Enter amount received"
+              autoFocus
+            />
+            {cashReceived && parseFloat(cashReceived) >= totalAmount && (
+              <div
+                style={{
+                  marginTop: '12px',
+                  padding: '12px',
+                  backgroundColor: '#d1fae5',
+                  borderRadius: '6px',
+                }}
+              >
+                <div style={{ fontSize: '14px', color: '#065f46', fontWeight: '600' }}>
+                  Change: ${change.toFixed(2)}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Action Buttons */}
+        <div style={modalStyles.buttonGroup}>
+          <button
+            type="button"
+            onClick={onClose}
+            style={modalStyles.cancelButton}
+            disabled={isProcessing}
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={processPayment}
+            style={{
+              ...modalStyles.submitButton,
+              backgroundColor: '#059669',
+              ...(isProcessing ? modalStyles.submitButtonDisabled : {}),
+            }}
+            disabled={isProcessing}
+          >
+            {isProcessing ? 'Processing...' : '💰 Pay & Complete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // Create/Edit Voucher Modal
-const VoucherModal = ({ isOpen, onClose, voucher, onSuccess }) => {
+const VoucherModal = ({ isOpen, onClose, voucher, onSuccess, onPayAndComplete }) => {
   const [formData, setFormData] = useState({
     clientId: '',
     amount: '',
@@ -102,8 +433,6 @@ const VoucherModal = ({ isOpen, onClose, voucher, onSuccess }) => {
     walkInName: '',
     walkInPhone: '',
   })
-  const [showPaymentModal, setShowPaymentModal] = useState(false)
-  const [createdVoucher, setCreatedVoucher] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState(null)
   const { clients } = useClients()
@@ -131,11 +460,9 @@ const VoucherModal = ({ isOpen, onClose, voucher, onSuccess }) => {
         walkInPhone: '',
       })
     }
-    setShowPaymentModal(false)
-    setCreatedVoucher(null)
   }, [voucher, isOpen])
 
-  const handleCreateVoucher = async (e) => {
+  const handleSubmit = async (e, payNow = false) => {
     e.preventDefault()
     setError(null)
 
@@ -149,23 +476,20 @@ const VoucherModal = ({ isOpen, onClose, voucher, onSuccess }) => {
       return
     }
 
-    // Validate voucher code is 5 characters
-    if (!voucher && formData.code.length !== 5) {
-      setError('Voucher code must be exactly 5 characters')
-      return
-    }
-
     try {
       setIsSubmitting(true)
+
       let clientId = formData.clientId
+      let clientName = null
 
-      // Create walk-in client if needed
+      // Get client name for display
+      if (clientId) {
+        const selectedClient = clients.find((c) => c.id === parseInt(clientId))
+        clientName = selectedClient?.fullName || selectedClient?.phone || selectedClient?.email
+      }
+
+      // If walk-in client info provided, create new client
       if (!clientId && (formData.walkInName || formData.walkInPhone)) {
-        if (!formData.walkInName && !formData.walkInPhone) {
-          setError('Please provide either name or phone for walk-in client')
-          return
-        }
-
         try {
           const newClient = await createClient({
             fullName: formData.walkInName || null,
@@ -173,6 +497,7 @@ const VoucherModal = ({ isOpen, onClose, voucher, onSuccess }) => {
             email: null,
           })
           clientId = newClient.id
+          clientName = formData.walkInName || formData.walkInPhone
         } catch (err) {
           console.error('Error creating client:', err)
           setError('Failed to create walk-in client')
@@ -190,36 +515,45 @@ const VoucherModal = ({ isOpen, onClose, voucher, onSuccess }) => {
         onSuccess()
         onClose()
       } else {
-        // Create new voucher
-        const newVoucher = await createVoucher({
-          code: formData.code,
-          clientId: clientId || null,
-          amount: formData.amount,
-          notes: formData.notes,
-          issuedBy: formData.staffId,
-        })
+        // For new vouchers
+        if (payNow) {
+          // Get staff name
+          const selectedStaff = staff.find((s) => s.id === parseInt(formData.staffId))
+          const staffName = selectedStaff?.name || 'Unknown'
 
-        setCreatedVoucher({ ...newVoucher, clientId })
-        setIsSubmitting(false)
-        // Don't close modal yet - just created voucher
+          // Prepare data for payment modal
+          const voucherDataForPayment = {
+            code: formData.code,
+            amount: formData.amount,
+            notes: formData.notes,
+            clientId: clientId || null,
+            clientName: clientName,
+            staffId: formData.staffId,
+            staffName: staffName,
+          }
+
+          // Close this modal and open payment modal
+          onClose()
+          onPayAndComplete(voucherDataForPayment)
+        } else {
+          // Create without payment
+          await createVoucher({
+            code: formData.code,
+            clientId: clientId || null,
+            amount: formData.amount,
+            notes: formData.notes,
+            issuedBy: formData.staffId,
+          })
+          onSuccess()
+          onClose()
+        }
       }
     } catch (err) {
       console.error('Error saving voucher:', err)
       setError(err.message || 'Failed to save voucher')
+    } finally {
       setIsSubmitting(false)
     }
-  }
-
-  const handlePayAndCreate = () => {
-    if (createdVoucher) {
-      setShowPaymentModal(true)
-    }
-  }
-
-  const handlePaymentComplete = () => {
-    setShowPaymentModal(false)
-    onSuccess()
-    onClose()
   }
 
   if (!isOpen) return null
@@ -227,246 +561,188 @@ const VoucherModal = ({ isOpen, onClose, voucher, onSuccess }) => {
   const isWalkIn = !formData.clientId && (formData.walkInName || formData.walkInPhone)
 
   return (
-    <>
-      <div style={modalStyles.overlay} onClick={onClose}>
-        <div style={modalStyles.modal} onClick={(e) => e.stopPropagation()}>
-          <div style={modalStyles.modalHeader}>
-            <h2 style={modalStyles.modalTitle}>
-              {voucher ? 'Edit Voucher' : 'Create New Voucher'}
-            </h2>
-            <p style={modalStyles.modalSubtitle}>
-              {voucher ? 'Update voucher details' : 'Issue a new voucher with 1 year expiration'}
-            </p>
+    <div style={modalStyles.overlay} onClick={onClose}>
+      <div style={modalStyles.modal} onClick={(e) => e.stopPropagation()}>
+        <div style={modalStyles.modalHeader}>
+          <h2 style={modalStyles.modalTitle}>{voucher ? 'Edit Voucher' : 'Create New Voucher'}</h2>
+          <p style={modalStyles.modalSubtitle}>
+            {voucher ? 'Update voucher details' : 'Issue a new voucher with 1 year expiration'}
+          </p>
+        </div>
+
+        {error && <div style={modalStyles.errorMessage}>{error}</div>}
+
+        <form onSubmit={(e) => handleSubmit(e, false)}>
+          {/* Voucher Code */}
+          <div style={modalStyles.formGroup}>
+            <label style={modalStyles.label}>Voucher Code * (5 characters)</label>
+            <input
+              type="text"
+              value={formData.code}
+              onChange={(e) => {
+                const value = e.target.value
+                  .toUpperCase()
+                  .replace(/[^A-Z0-9]/g, '')
+                  .slice(0, 5)
+                setFormData({ ...formData, code: value })
+              }}
+              style={{
+                ...modalStyles.input,
+                ...(voucher ? modalStyles.readOnlyField : {}),
+                fontFamily: 'monospace',
+                fontSize: '16px',
+                letterSpacing: '2px',
+              }}
+              disabled={!!voucher}
+              required
+              maxLength={5}
+              placeholder="ABC12"
+            />
           </div>
 
-          {error && <div style={modalStyles.errorMessage}>{error}</div>}
+          {/* Amount */}
+          <div style={modalStyles.formGroup}>
+            <label style={modalStyles.label}>Amount ($) *</label>
+            <input
+              type="number"
+              step="0.01"
+              min="0.01"
+              value={formData.amount}
+              onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+              style={{
+                ...modalStyles.input,
+                ...(voucher ? modalStyles.readOnlyField : {}),
+              }}
+              disabled={!!voucher}
+              required
+            />
+          </div>
 
-          {createdVoucher ? (
-            // Voucher created - show success and payment option
-            <div>
-              <div style={modalStyles.successMessage}>
-                ✅ Voucher {createdVoucher.code} created successfully!
-              </div>
+          {/* Staff Selection */}
+          {!voucher && (
+            <div style={modalStyles.formGroup}>
+              <label style={modalStyles.label}>Staff Member *</label>
+              <select
+                value={formData.staffId}
+                onChange={(e) => setFormData({ ...formData, staffId: e.target.value })}
+                style={modalStyles.input}
+                required
+              >
+                <option value="">-- Select Staff --</option>
+                {staff.map((staffMember) => (
+                  <option key={staffMember.id} value={staffMember.id}>
+                    {staffMember.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
 
+          {/* Client Section */}
+          <div style={modalStyles.formGroup}>
+            <label style={modalStyles.label}>Client (Optional)</label>
+            <select
+              value={formData.clientId}
+              onChange={(e) => {
+                setFormData({
+                  ...formData,
+                  clientId: e.target.value,
+                  walkInName: '',
+                  walkInPhone: '',
+                })
+              }}
+              style={modalStyles.input}
+            >
+              <option value="">-- Select Existing Client or Add Walk-in --</option>
+              {clients.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.fullName || client.email || client.phone}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Walk-in Client Fields */}
+          {!formData.clientId && !voucher && (
+            <div
+              style={{
+                padding: '16px',
+                backgroundColor: '#f0f9ff',
+                border: '1px solid #bae6fd',
+                borderRadius: '6px',
+                marginBottom: '16px',
+              }}
+            >
               <div
                 style={{
-                  padding: '20px',
-                  backgroundColor: '#f9fafb',
-                  borderRadius: '8px',
-                  marginBottom: '20px',
+                  fontSize: '13px',
+                  fontWeight: '600',
+                  marginBottom: '12px',
+                  color: '#0c4a6e',
                 }}
               >
-                <div style={{ fontSize: '14px', fontWeight: '600', marginBottom: '12px' }}>
-                  Voucher Details:
-                </div>
-                <div style={{ fontSize: '14px', marginBottom: '8px' }}>
-                  Code:{' '}
-                  <strong style={{ fontFamily: 'monospace', fontSize: '16px' }}>
-                    {createdVoucher.code}
-                  </strong>
-                </div>
-                <div style={{ fontSize: '14px', marginBottom: '8px' }}>
-                  Amount: <strong>${parseFloat(createdVoucher.amount).toFixed(2)}</strong>
-                </div>
-                <div style={{ fontSize: '14px' }}>
-                  Status: <span style={{ color: '#059669' }}>Active</span>
-                </div>
+                🚶 Walk-in Client (Optional)
               </div>
 
-              <div style={modalStyles.infoBox}>
-                <p style={modalStyles.infoText}>
-                  Would you like to process payment for this voucher now?
-                </p>
-              </div>
-
-              <div style={modalStyles.buttonGroup}>
-                <button
-                  type="button"
-                  onClick={() => {
-                    onSuccess()
-                    onClose()
-                  }}
-                  style={modalStyles.cancelButton}
-                >
-                  Skip Payment
-                </button>
-                <button
-                  type="button"
-                  onClick={handlePayAndCreate}
-                  style={{
-                    ...modalStyles.submitButton,
-                    backgroundColor: '#059669',
-                  }}
-                >
-                  💰 Pay & Complete
-                </button>
-              </div>
-            </div>
-          ) : (
-            // Show create form
-            <form onSubmit={handleCreateVoucher}>
-              {/* Voucher Code */}
               <div style={modalStyles.formGroup}>
-                <label style={modalStyles.label}>Voucher Code * (5 characters)</label>
+                <label style={modalStyles.label}>Name</label>
                 <input
                   type="text"
-                  value={formData.code}
-                  onChange={(e) => setFormData({ ...formData, code: e.target.value.toUpperCase() })}
-                  style={{
-                    ...modalStyles.input,
-                    ...(voucher ? modalStyles.readOnlyField : {}),
-                  }}
-                  disabled={!!voucher}
-                  maxLength={5}
-                  pattern="[A-Z0-9]{5}"
-                  required
-                />
-                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>
-                  5 letters or numbers only (e.g., ABC12, XY789)
-                </div>
-              </div>
-
-              {/* Amount */}
-              <div style={modalStyles.formGroup}>
-                <label style={modalStyles.label}>Amount ($) *</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  value={formData.amount}
-                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                  style={{
-                    ...modalStyles.input,
-                    ...(voucher ? modalStyles.readOnlyField : {}),
-                  }}
-                  disabled={!!voucher}
-                  required
-                />
-              </div>
-
-              {/* Staff Selection */}
-              {!voucher && (
-                <div style={modalStyles.formGroup}>
-                  <label style={modalStyles.label}>Staff Member *</label>
-                  <select
-                    value={formData.staffId}
-                    onChange={(e) => setFormData({ ...formData, staffId: e.target.value })}
-                    style={modalStyles.input}
-                    required
-                  >
-                    <option value="">-- Select Staff --</option>
-                    {staff.map((staffMember) => (
-                      <option key={staffMember.id} value={staffMember.id}>
-                        {staffMember.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-
-              {/* Client Section */}
-              <div style={modalStyles.formGroup}>
-                <label style={modalStyles.label}>Client (Optional)</label>
-                <select
-                  value={formData.clientId}
-                  onChange={(e) => {
-                    setFormData({
-                      ...formData,
-                      clientId: e.target.value,
-                      walkInName: '',
-                      walkInPhone: '',
-                    })
-                  }}
+                  value={formData.walkInName}
+                  onChange={(e) => setFormData({ ...formData, walkInName: e.target.value })}
                   style={modalStyles.input}
-                >
-                  <option value="">-- Select Existing Client or Add Walk-in --</option>
-                  {clients.map((client) => (
-                    <option key={client.id} value={client.id}>
-                      {client.fullName || client.email || client.phone}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Walk-in Client Fields */}
-              {!formData.clientId && !voucher && (
-                <div
-                  style={{
-                    padding: '16px',
-                    backgroundColor: '#f0f9ff',
-                    border: '1px solid #bae6fd',
-                    borderRadius: '6px',
-                    marginBottom: '16px',
-                  }}
-                >
-                  <div
-                    style={{
-                      fontSize: '13px',
-                      fontWeight: '600',
-                      marginBottom: '12px',
-                      color: '#0c4a6e',
-                    }}
-                  >
-                    Walk-in Client (Optional)
-                  </div>
-
-                  <div style={modalStyles.formGroup}>
-                    <label style={modalStyles.label}>Name</label>
-                    <input
-                      type="text"
-                      value={formData.walkInName}
-                      onChange={(e) => setFormData({ ...formData, walkInName: e.target.value })}
-                      style={modalStyles.input}
-                      placeholder="Enter client name"
-                    />
-                  </div>
-
-                  <div style={modalStyles.formGroup}>
-                    <label style={modalStyles.label}>Phone Number</label>
-                    <input
-                      type="tel"
-                      value={formData.walkInPhone}
-                      onChange={(e) => setFormData({ ...formData, walkInPhone: e.target.value })}
-                      style={modalStyles.input}
-                      placeholder="Enter phone number"
-                    />
-                  </div>
-
-                  {isWalkIn && (
-                    <div style={{ fontSize: '12px', color: '#0369a1', marginTop: '8px' }}>
-                      ℹ️ A new client will be created with this information
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Notes */}
-              <div style={modalStyles.formGroup}>
-                <label style={modalStyles.label}>Notes</label>
-                <textarea
-                  value={formData.notes}
-                  onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                  style={modalStyles.textarea}
-                  placeholder="Add any notes about this voucher..."
+                  placeholder="Enter client name"
                 />
               </div>
 
-              {!voucher && (
-                <div style={modalStyles.infoBox}>
-                  <p style={modalStyles.infoText}>ℹ️ This voucher will expire 1 year from today.</p>
+              <div style={modalStyles.formGroup}>
+                <label style={modalStyles.label}>Phone Number</label>
+                <input
+                  type="tel"
+                  value={formData.walkInPhone}
+                  onChange={(e) => setFormData({ ...formData, walkInPhone: e.target.value })}
+                  style={modalStyles.input}
+                  placeholder="Enter phone number"
+                />
+              </div>
+
+              {isWalkIn && (
+                <div style={{ fontSize: '12px', color: '#0369a1', marginTop: '8px' }}>
+                  ℹ️ A new client will be created with this information
                 </div>
               )}
+            </div>
+          )}
 
-              <div style={modalStyles.buttonGroup}>
-                <button
-                  type="button"
-                  onClick={onClose}
-                  style={modalStyles.cancelButton}
-                  disabled={isSubmitting}
-                >
-                  Cancel
-                </button>
+          {/* Notes */}
+          <div style={modalStyles.formGroup}>
+            <label style={modalStyles.label}>Notes</label>
+            <textarea
+              value={formData.notes}
+              onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+              style={modalStyles.textarea}
+              placeholder="Add any notes about this voucher..."
+            />
+          </div>
 
+          {!voucher && (
+            <div style={modalStyles.infoBox}>
+              <p style={modalStyles.infoText}>ℹ️ This voucher will expire 1 year from today.</p>
+            </div>
+          )}
+
+          <div style={modalStyles.buttonGroup}>
+            <button
+              type="button"
+              onClick={onClose}
+              style={modalStyles.cancelButton}
+              disabled={isSubmitting}
+            >
+              Cancel
+            </button>
+
+            {!voucher && (
+              <>
                 <button
                   type="submit"
                   style={{
@@ -475,271 +751,38 @@ const VoucherModal = ({ isOpen, onClose, voucher, onSuccess }) => {
                   }}
                   disabled={isSubmitting}
                 >
-                  {isSubmitting ? 'Creating...' : voucher ? 'Update Voucher' : 'Create Voucher'}
+                  {isSubmitting ? 'Creating...' : 'Create Voucher'}
                 </button>
-              </div>
-            </form>
-          )}
-        </div>
-      </div>
 
-      {/* Payment Modal */}
-      {showPaymentModal && createdVoucher && (
-        <PaymentModal
-          voucher={createdVoucher}
-          onClose={() => setShowPaymentModal(false)}
-          onComplete={handlePaymentComplete}
-        />
-      )}
-    </>
-  )
-}
-
-// Payment Modal Component
-const PaymentModal = ({ voucher, onClose, onComplete }) => {
-  const [paymentMethod, setPaymentMethod] = useState('cash')
-  const [cashReceived, setCashReceived] = useState('')
-  const [message, setMessage] = useState(null)
-
-  const totalAmount = parseFloat(voucher.amount)
-  const change =
-    paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - totalAmount : 0
-
-  const handlePayment = async () => {
-    setMessage(null)
-
-    // Validate cash payment
-    if (paymentMethod === 'cash') {
-      if (!cashReceived || parseFloat(cashReceived) < totalAmount) {
-        setMessage({ type: 'error', text: 'Cash received must be at least the voucher amount' })
-        return
-      }
-    }
-
-    // Close modal immediately
-    onComplete()
-
-    try {
-      // Process payment in background
-      const transactionData = {
-        items: [
-          {
-            name: `Voucher ${voucher.code}`,
-            quantity: 1,
-            regularPrice: totalAmount,
-          },
-        ],
-        subtotal: totalAmount,
-        discount_type: null,
-        discount_value: null,
-        discount_amount: 0,
-        total: totalAmount,
-        payment_method: paymentMethod,
-        cash_received: paymentMethod === 'cash' ? parseFloat(cashReceived) : null,
-        change_given: paymentMethod === 'cash' ? change : null,
-        timestamp: new Date().toISOString(),
-        user_id: 'current_user_id',
-        staff: voucher.issued_by,
-        notes: `Payment for voucher ${voucher.code}${
-          voucher.clientId ? ` - Client ID: ${voucher.clientId}` : ''
-        }`,
-      }
-
-      const { error: transactionError } = await supabase
-        .from('transactions')
-        .insert([transactionData])
-
-      if (transactionError) {
-        console.error('Transaction error:', transactionError)
-      }
-
-      // Log cash drawer opening
-      if (paymentMethod === 'cash') {
-        await supabase.from('cash_drawer_logs').insert([
-          {
-            action: 'drawer_opened',
-            user_id: 'current_user_id',
-            timestamp: new Date().toISOString(),
-            amount: totalAmount,
-            status: 'success',
-            metadata: {
-              voucher_code: voucher.code,
-              payment_method: paymentMethod,
-              staff_id: voucher.issued_by,
-            },
-          },
-        ])
-      }
-
-      // Update voucher notes to indicate it was paid
-      await updateVoucher(voucher.id, {
-        clientId: voucher.clientId,
-        notes: (voucher.notes || '') + ' [Paid on creation]',
-        status: 'active',
-      })
-    } catch (error) {
-      console.error('Payment error:', error)
-      // Error logged but modal already closed
-    }
-  }
-
-  return (
-    <div style={modalStyles.overlay} onClick={onClose}>
-      <div style={modalStyles.modal} onClick={(e) => e.stopPropagation()}>
-        <div style={modalStyles.modalHeader}>
-          <h2 style={modalStyles.modalTitle}>Complete Payment</h2>
-          <p style={modalStyles.modalSubtitle}>
-            Voucher Code: <strong>{voucher.code}</strong>
-          </p>
-        </div>
-
-        {message && (
-          <div
-            style={
-              message.type === 'success' ? modalStyles.successMessage : modalStyles.errorMessage
-            }
-          >
-            {message.text}
-          </div>
-        )}
-
-        {/* Amount Summary */}
-        <div
-          style={{
-            padding: '16px',
-            backgroundColor: '#f9fafb',
-            borderRadius: '6px',
-            marginBottom: '24px',
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              fontWeight: '600',
-              fontSize: '18px',
-            }}
-          >
-            <span>Total Amount:</span>
-            <span>${totalAmount.toFixed(2)}</span>
-          </div>
-        </div>
-
-        {/* Payment Method Selection */}
-        <div style={modalStyles.formGroup}>
-          <label style={modalStyles.label}>Payment Method</label>
-          <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
-            <button
-              type="button"
-              onClick={() => setPaymentMethod('cash')}
-              style={{
-                flex: 1,
-                padding: '12px',
-                border: paymentMethod === 'cash' ? '2px solid #007bff' : '1px solid #d1d5db',
-                backgroundColor: paymentMethod === 'cash' ? '#eff6ff' : 'white',
-                borderRadius: '6px',
-                fontSize: '14px',
-                fontWeight: '500',
-                cursor: 'pointer',
-                transition: 'all 0.2s',
-              }}
-            >
-              💵 Cash
-            </button>
-            <button
-              type="button"
-              onClick={() => setPaymentMethod('card')}
-              style={{
-                flex: 1,
-                padding: '12px',
-                border: paymentMethod === 'card' ? '2px solid #007bff' : '1px solid #d1d5db',
-                backgroundColor: paymentMethod === 'card' ? '#eff6ff' : 'white',
-                borderRadius: '6px',
-                fontSize: '14px',
-                fontWeight: '500',
-                cursor: 'pointer',
-                transition: 'all 0.2s',
-              }}
-            >
-              💳 Card
-            </button>
-            <button
-              type="button"
-              onClick={() => setPaymentMethod('payid')}
-              style={{
-                flex: 1,
-                padding: '12px',
-                border: paymentMethod === 'payid' ? '2px solid #007bff' : '1px solid #d1d5db',
-                backgroundColor: paymentMethod === 'payid' ? '#eff6ff' : 'white',
-                borderRadius: '6px',
-                fontSize: '14px',
-                fontWeight: '500',
-                cursor: 'pointer',
-                transition: 'all 0.2s',
-              }}
-            >
-              📱 PayID
-            </button>
-          </div>
-        </div>
-
-        {/* Cash Amount Input */}
-        {paymentMethod === 'cash' && (
-          <>
-            <div style={modalStyles.formGroup}>
-              <label style={modalStyles.label}>Cash Received *</label>
-              <input
-                type="number"
-                step="0.01"
-                min={totalAmount}
-                value={cashReceived}
-                onChange={(e) => setCashReceived(e.target.value)}
-                style={modalStyles.input}
-                placeholder={`Minimum $${totalAmount.toFixed(2)}`}
-                autoFocus
-              />
-            </div>
-
-            {cashReceived && parseFloat(cashReceived) >= totalAmount && (
-              <div
-                style={{
-                  padding: '12px',
-                  backgroundColor: '#d1fae5',
-                  borderRadius: '6px',
-                  marginBottom: '16px',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px' }}>
-                  <span>Change to give:</span>
-                  <span style={{ fontWeight: '600', fontSize: '16px' }}>${change.toFixed(2)}</span>
-                </div>
-              </div>
+                <button
+                  type="button"
+                  onClick={(e) => handleSubmit(e, true)}
+                  style={{
+                    ...modalStyles.submitButton,
+                    backgroundColor: '#059669',
+                    ...(isSubmitting ? modalStyles.submitButtonDisabled : {}),
+                  }}
+                  disabled={isSubmitting}
+                >
+                  💰 Pay & Complete
+                </button>
+              </>
             )}
-          </>
-        )}
 
-        <div style={modalStyles.buttonGroup}>
-          <button type="button" onClick={onClose} style={modalStyles.cancelButton}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handlePayment}
-            disabled={
-              paymentMethod === 'cash' && (!cashReceived || parseFloat(cashReceived) < totalAmount)
-            }
-            style={{
-              ...modalStyles.submitButton,
-              backgroundColor: '#059669',
-              ...(paymentMethod === 'cash' &&
-              (!cashReceived || parseFloat(cashReceived) < totalAmount)
-                ? modalStyles.submitButtonDisabled
-                : {}),
-            }}
-          >
-            Complete Payment
-          </button>
-        </div>
+            {voucher && (
+              <button
+                type="submit"
+                style={{
+                  ...modalStyles.submitButton,
+                  ...(isSubmitting ? modalStyles.submitButtonDisabled : {}),
+                }}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? 'Updating...' : 'Update Voucher'}
+              </button>
+            )}
+          </div>
+        </form>
       </div>
     </div>
   )
@@ -796,7 +839,7 @@ const RedeemModal = ({ isOpen, onClose, voucher, onSuccess }) => {
         <div style={modalStyles.modalHeader}>
           <h2 style={modalStyles.modalTitle}>Redeem Voucher</h2>
           <p style={modalStyles.modalSubtitle}>
-            Voucher Code: <strong>{voucher.code}</strong>
+            Voucher Code: <strong style={{ fontFamily: 'monospace' }}>{voucher.code}</strong>
           </p>
         </div>
 
@@ -1051,9 +1094,12 @@ const VouchersPage = () => {
   })
   const [stats, setStats] = useState(null)
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false)
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false)
   const [isRedeemModalOpen, setIsRedeemModalOpen] = useState(false)
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false)
   const [selectedVoucher, setSelectedVoucher] = useState(null)
+  const [voucherDataForPayment, setVoucherDataForPayment] = useState(null)
+  const [serialPort, setSerialPort] = useState(null)
 
   const { vouchers, isLoading, refetch } = useVouchers(filters)
 
@@ -1068,6 +1114,11 @@ const VouchersPage = () => {
     } catch (err) {
       console.error('Error fetching stats:', err)
     }
+  }
+
+  const handlePayAndComplete = (voucherData) => {
+    setVoucherDataForPayment(voucherData)
+    setIsPaymentModalOpen(true)
   }
 
   const handleViewDetails = (voucher) => {
@@ -1275,6 +1326,22 @@ const VouchersPage = () => {
           refetch()
           fetchStats()
         }}
+        onPayAndComplete={handlePayAndComplete}
+      />
+
+      <VoucherPaymentModal
+        isOpen={isPaymentModalOpen}
+        onClose={() => {
+          setIsPaymentModalOpen(false)
+          setVoucherDataForPayment(null)
+        }}
+        voucherData={voucherDataForPayment}
+        onSuccess={() => {
+          refetch()
+          fetchStats()
+        }}
+        serialPort={serialPort}
+        setSerialPort={setSerialPort}
       />
 
       <RedeemModal
