@@ -1586,7 +1586,8 @@ const BookingDetailPage = () => {
               <div style={styles.overviewLabel}>Client</div>
               <div style={styles.overviewValue}>
                 <span style={styles.clientIcon}>👤</span>
-                {booking.client?.fullName || booking.client?.email || booking.name || booking.phone}
+                {booking.client?.fullName || booking.client?.email || booking.name} -{' '}
+                {booking.phone || booking.client?.phone}
               </div>
             </div>
 
