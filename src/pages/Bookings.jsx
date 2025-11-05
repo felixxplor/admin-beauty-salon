@@ -605,6 +605,7 @@ const BookingCalendar = () => {
         numClients: booking.numClients || 1,
         duration: Math.round((endTime - startTime) / (1000 * 60)),
         created_at: booking.created_at,
+        notes: booking.notes || '',
       }
 
       return transformedBooking
@@ -1377,6 +1378,22 @@ const BookingCalendar = () => {
                           >
                             {bookingInfo.booking.client}
                           </div>
+                          {/* Only show notes if they exist */}
+                          {bookingInfo.booking.notes && bookingInfo.booking.notes.trim() !== '' && (
+                            <div
+                              style={{
+                                fontSize: '10px',
+                                overflow: 'hidden',
+                                fontWeight: 'bold',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                lineHeight: '1.2',
+                                color: 'yellow',
+                              }}
+                            >
+                              {bookingInfo.booking.notes}
+                            </div>
+                          )}
                           {bookingInfo.booking.numClients > 1 && (
                             <div style={{ fontSize: '9px', opacity: 0.8, marginTop: '2px' }}>
                               ({bookingInfo.booking.numClients} clients)
