@@ -257,20 +257,56 @@ export const cancelVoucher = async (id, reason = null) => {
  */
 export const getVoucherTransactions = async (voucherId) => {
   try {
-    const { data, error } = await supabase
+    // Try with just the booking join first
+    let { data, error } = await supabase
       .from('voucher_transactions')
       .select(
         `
         *,
-        booking:bookings(id, startTime),
-        createdBy:staff!voucher_transactions_created_by_fkey(id, name)
+        booking:bookings(id, startTime)
       `
       )
       .eq('voucher_id', voucherId)
       .order('created_at', { ascending: false })
 
+    // If booking join fails, try without it
+    if (error && error.message?.includes('booking')) {
+      // console.log('Booking join failed, trying without it...')
+      const result = await supabase
+        .from('voucher_transactions')
+        .select('*')
+        .eq('voucher_id', voucherId)
+        .order('created_at', { ascending: false })
+
+      data = result.data
+      error = result.error
+    }
+
+    // Try to add staff join if basic query works
+    if (!error && data) {
+      try {
+        const { data: dataWithStaff, error: staffError } = await supabase
+          .from('voucher_transactions')
+          .select(
+            `
+            *,
+            booking:bookings(id, startTime),
+            createdBy:staff(id, name)
+          `
+          )
+          .eq('voucher_id', voucherId)
+          .order('created_at', { ascending: false })
+
+        if (!staffError) {
+          data = dataWithStaff
+        }
+      } catch (staffJoinError) {
+        // console.log('Staff join failed, using basic data')
+      }
+    }
+
     if (error) throw error
-    return data
+    return data || []
   } catch (error) {
     console.error('Error fetching voucher transactions:', error)
     throw error

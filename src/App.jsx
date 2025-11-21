@@ -24,6 +24,7 @@ import PendingBookings from './pages/PendingBookings'
 import StaffLeavePage from './pages/Staff'
 import Transactions from './pages/Transactions'
 import VouchersPage from './pages/VouchersPage'
+import RosterPage from './pages/RosterPage'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -60,6 +61,7 @@ function App() {
               <Route path="/staff" element={<StaffLeavePage />} />
               <Route path="/transactions" element={<Transactions />} />
               <Route path="/vouchers" element={<VouchersPage />} />
+              <Route path="/roster" element={<RosterPage />} />
 
               <Route path="services" element={<Services />} />
               <Route path="clients" element={<ClientsPage />} />

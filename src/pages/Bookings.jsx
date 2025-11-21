@@ -9,6 +9,16 @@ import { getClient } from '../services/apiClients'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import supabase from '../services/supabase'
 
+// Absence types for leave management
+const absenceTypes = [
+  'Sick Leave',
+  'Annual Leave',
+  'Personal Leave',
+  'Public Holiday',
+  'Unpaid Leave',
+  'Training',
+]
+
 // Custom hook to use the getStaff function
 const useStaff = () => {
   const [staff, setStaff] = useState([])
@@ -87,35 +97,156 @@ const useClients = () => {
   return { clients, isLoading, error }
 }
 
-// Custom hook to fetch staff shifts
-const useStaffShifts = () => {
-  const [staffShifts, setStaffShifts] = useState([])
+// Enhanced hook to get staff working on a specific date
+const useStaffWorkingOnDate = (date) => {
+  const [workingStaff, setWorkingStaff] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    const fetchStaffShifts = async () => {
+    const fetchWorkingStaff = async () => {
+      if (!date) {
+        setWorkingStaff([])
+        setIsLoading(false)
+        return
+      }
+
       try {
         setIsLoading(true)
-        const { data, error } = await supabase
-          .from('staff_shifts')
-          .select('*')
-          .order('dayOfWeek', { ascending: true })
 
-        if (error) throw error
-        setStaffShifts(data || [])
+        // Get all staff first
+        const allStaff = await getStaff()
+
+        // Get day of week for recurring shifts
+        const selectedDate = new Date(date)
+        const dayOfWeek = selectedDate.getDay()
+
+        // Fetch both recurring and specific shifts
+        const { data: shifts, error: shiftsError } = await supabase
+          .from('staff_shifts')
+          .select(
+            `
+            *,
+            staff:staffId (
+              id,
+              name
+            )
+          `
+          )
+          .or(`dayOfWeek.eq.${dayOfWeek},specificDate.eq.${date}`)
+
+        if (shiftsError) {
+          console.error('Error fetching shifts:', shiftsError)
+          throw shiftsError
+        }
+
+        // Fetch staff absences for this date
+        const { data: absences, error: absencesError } = await supabase
+          .from('staff_absences')
+          .select('staffId, absenceType, notes')
+          .eq('absenceDate', date)
+
+        if (absencesError) {
+          console.error('Error fetching absences:', absencesError)
+          throw absencesError
+        }
+
+        const validShifts = shifts || []
+        const staffAbsences = absences || []
+
+        // Get staff IDs who are on leave
+        const staffOnLeave = staffAbsences.map((absence) => absence.staffId)
+
+        // Get staff IDs who have shifts but are NOT on leave
+        const workingStaffIds = [...new Set(validShifts.map((shift) => shift.staffId))].filter(
+          (staffId) => !staffOnLeave.includes(staffId)
+        )
+
+        // Filter staff to only include those with shifts and not on leave
+        const staffWithShifts = allStaff.filter((staffMember) =>
+          workingStaffIds.includes(staffMember.id)
+        )
+
+        // Add shift information to each staff member
+        const enrichedStaff = staffWithShifts.map((staffMember) => {
+          const staffShifts = validShifts.filter((shift) => shift.staffId === staffMember.id)
+          return {
+            ...staffMember,
+            shifts: staffShifts,
+            hasSpecificShift: staffShifts.some((shift) => shift.specificDate === date),
+            hasRecurringShift: staffShifts.some(
+              (shift) => shift.dayOfWeek === dayOfWeek && !shift.specificDate
+            ),
+          }
+        })
+
+        setWorkingStaff(enrichedStaff)
+        setError(null)
       } catch (err) {
-        console.error('Error loading staff shifts:', err)
+        console.error('Error loading working staff:', err)
         setError(err)
-        setStaffShifts([])
+        setWorkingStaff([])
       } finally {
         setIsLoading(false)
       }
     }
-    fetchStaffShifts()
-  }, [])
 
-  return { staffShifts, isLoading, error }
+    fetchWorkingStaff()
+  }, [date])
+
+  return { workingStaff, isLoading, error }
+}
+
+// Custom hook to get staff absences for a specific date
+const useStaffAbsences = (date) => {
+  const [absences, setAbsences] = useState([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    const fetchAbsences = async () => {
+      if (!date) {
+        setAbsences([])
+        setIsLoading(false)
+        return
+      }
+
+      try {
+        setIsLoading(true)
+
+        const { data: absencesData, error: absencesError } = await supabase
+          .from('staff_absences')
+          .select(
+            `
+            *,
+            staff:staffId (
+              id,
+              name
+            )
+          `
+          )
+          .eq('absenceDate', date)
+
+        if (absencesError) {
+          console.error('Error fetching absences:', absencesError)
+          throw absencesError
+        }
+
+        setAbsences(absencesData || [])
+        setError(null)
+      } catch (err) {
+        console.error('Error loading staff absences:', err)
+        setError(err)
+        setAbsences([])
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchAbsences()
+  }, [date])
+
+  return { absences, isLoading, error }
 }
 
 const timeSlots = [
@@ -161,21 +292,6 @@ const timeSlots = [
   '18:45',
   '19:00',
 ]
-
-// Helper function to get staff working on a specific day
-const getStaffWorkingOnDay = (date, staff, staffShifts) => {
-  if (!date || !staff || !staffShifts || staffShifts.length === 0) return staff
-
-  const dayOfWeek = new Date(date).getDay()
-
-  const workingStaffIds = staffShifts
-    .filter((shift) => shift.dayOfWeek === dayOfWeek)
-    .map((shift) => shift.staffId)
-
-  const workingStaff = staff.filter((s) => workingStaffIds.includes(s.id))
-
-  return workingStaff.length > 0 ? workingStaff : staff
-}
 
 // Add this helper function near the top with other helper functions
 const getBookingColor = (booking, status) => {
@@ -239,6 +355,16 @@ const timeToMinutes = (timeStr) => {
   return hours * 60 + minutes
 }
 
+// Helper function to format shift time display
+const formatShiftTime = (timeString) => {
+  if (!timeString) return ''
+  const [hours, minutes] = timeString.split(':')
+  const hour = parseInt(hours)
+  const ampm = hour >= 12 ? 'PM' : 'AM'
+  const displayHour = hour === 0 ? 12 : hour > 12 ? hour - 12 : hour
+  return `${displayHour}:${minutes} ${ampm}`
+}
+
 const BookingCalendar = () => {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -250,6 +376,25 @@ const BookingCalendar = () => {
   const [isCreating, setIsCreating] = useState(false)
   const [serviceSearchTerm, setServiceSearchTerm] = useState('')
   const [currentTime, setCurrentTime] = useState(new Date())
+
+  // Shift creation state
+  const [showShiftModal, setShowShiftModal] = useState(false)
+  const [isCreatingShift, setIsCreatingShift] = useState(false)
+  const [shiftFormData, setShiftFormData] = useState({
+    staffId: '',
+    startTime: '',
+    endTime: '',
+    notes: '',
+  })
+
+  // Leave management state
+  const [showLeaveModal, setShowLeaveModal] = useState(false)
+  const [isCreatingLeave, setIsCreatingLeave] = useState(false)
+  const [leaveFormData, setLeaveFormData] = useState({
+    staffId: '',
+    absenceType: 'Sick Leave',
+    notes: '',
+  })
 
   // Drag and drop state
   const [draggedBooking, setDraggedBooking] = useState(null)
@@ -310,9 +455,167 @@ const BookingCalendar = () => {
   const { staff, isLoading: staffLoading, error: staffError } = useStaff()
   const { services, isLoading: servicesLoading, error: servicesError } = useServices()
   const { clients, isLoading: clientsLoading, error: clientsError } = useClients()
-  const { staffShifts, isLoading: staffShiftsLoading, error: staffShiftsError } = useStaffShifts()
 
-  // Drag and drop handlers
+  // Use the enhanced hook for staff working on the selected date
+  const {
+    workingStaff,
+    isLoading: workingStaffLoading,
+    error: workingStaffError,
+  } = useStaffWorkingOnDate(selectedDate)
+
+  // Use the absences hook to get staff on leave for the selected date
+  const {
+    absences: staffAbsences,
+    isLoading: absencesLoading,
+    error: absencesError,
+  } = useStaffAbsences(selectedDate)
+
+  // Staff shift functions
+  const closeModal = () => {
+    setShowCreateModal(false)
+    setServiceSearchTerm('')
+  }
+
+  const closeShiftModal = () => {
+    setShowShiftModal(false)
+    setShiftFormData({
+      staffId: '',
+      startTime: '',
+      endTime: '',
+      notes: '',
+    })
+  }
+
+  const closeLeaveModal = () => {
+    setShowLeaveModal(false)
+    setLeaveFormData({
+      staffId: '',
+      absenceType: 'Sick Leave',
+      notes: '',
+    })
+  }
+
+  const handleCreateShift = async (e) => {
+    e.preventDefault()
+    setIsCreatingShift(true)
+
+    try {
+      if (!shiftFormData.staffId || !shiftFormData.startTime || !shiftFormData.endTime) {
+        alert('Please fill in all required fields')
+        setIsCreatingShift(false)
+        return
+      }
+
+      // Validate that end time is after start time
+      if (shiftFormData.startTime >= shiftFormData.endTime) {
+        alert('End time must be after start time')
+        setIsCreatingShift(false)
+        return
+      }
+
+      const shiftData = {
+        staffId: parseInt(shiftFormData.staffId),
+        specificDate: selectedDate,
+        dayOfWeek: null, // This is a specific date shift
+        startTime: shiftFormData.startTime,
+        endTime: shiftFormData.endTime,
+        notes: shiftFormData.notes || null,
+      }
+
+      const { error } = await supabase.from('staff_shifts').insert([shiftData])
+
+      if (error) throw error
+
+      alert('✓ Staff shift created successfully!')
+      closeShiftModal()
+
+      // Trigger a re-render by updating the selected date
+      const currentDate = selectedDate
+      setSelectedDate(null)
+      setTimeout(() => setSelectedDate(currentDate), 10)
+    } catch (error) {
+      console.error('Error creating staff shift:', error)
+      alert('❌ Failed to create shift: ' + (error.message || 'Please try again.'))
+    } finally {
+      setIsCreatingShift(false)
+    }
+  }
+
+  const handleCreateLeave = async (e) => {
+    e.preventDefault()
+    setIsCreatingLeave(true)
+
+    try {
+      if (!leaveFormData.staffId || !leaveFormData.absenceType) {
+        alert('Please fill in all required fields')
+        setIsCreatingLeave(false)
+        return
+      }
+
+      const leaveData = {
+        staffId: parseInt(leaveFormData.staffId),
+        absenceDate: selectedDate,
+        absenceType: leaveFormData.absenceType,
+        notes: leaveFormData.notes || null,
+      }
+
+      const { error } = await supabase.from('staff_absences').insert([leaveData])
+
+      if (error) throw error
+
+      alert('✓ Staff leave added successfully!')
+      closeLeaveModal()
+
+      // Refresh the working staff data
+      const currentDate = selectedDate
+      setSelectedDate(null)
+      setTimeout(() => setSelectedDate(currentDate), 10)
+    } catch (error) {
+      console.error('Error creating staff leave:', error)
+      alert('❌ Failed to add leave: ' + (error.message || 'Please try again.'))
+    } finally {
+      setIsCreatingLeave(false)
+    }
+  }
+
+  const handleDeleteShift = async (shift, staffName) => {
+    const shiftType = shift.specificDate ? 'specific date shift' : 'recurring shift'
+    const shiftDate = shift.specificDate
+      ? new Date(shift.specificDate).toLocaleDateString('en-US', {
+          weekday: 'short',
+          month: 'short',
+          day: 'numeric',
+        })
+      : ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][
+          shift.dayOfWeek
+        ]
+
+    const confirmMessage = `Are you sure you want to delete ${staffName}'s ${shiftType} on ${shiftDate} from ${formatShiftTime(
+      shift.startTime
+    )} to ${formatShiftTime(shift.endTime)}?`
+
+    if (!window.confirm(confirmMessage)) {
+      return
+    }
+
+    try {
+      const { error } = await supabase.from('staff_shifts').delete().eq('id', shift.id)
+
+      if (error) throw error
+
+      alert('✓ Shift deleted successfully!')
+
+      // Trigger a re-render to update the display
+      const currentDate = selectedDate
+      setSelectedDate(null)
+      setTimeout(() => setSelectedDate(currentDate), 10)
+    } catch (error) {
+      console.error('Error deleting staff shift:', error)
+      alert('❌ Failed to delete shift: ' + (error.message || 'Please try again.'))
+    }
+  }
+
+  // Drag and drop handlers (keeping your existing drag/drop code)
   const handleDragStart = (e, booking, staff, time) => {
     setDraggedBooking({
       booking,
@@ -721,11 +1024,6 @@ const BookingCalendar = () => {
     )
   }
 
-  const closeModal = () => {
-    setShowCreateModal(false)
-    setServiceSearchTerm('')
-  }
-
   const getBookingInfo = (staffMember, timeSlot, date, dayBookings) => {
     const roundToNearestSlot = (timeStr) => {
       const [hours, minutes] = timeStr.split(':').map(Number)
@@ -908,7 +1206,14 @@ const BookingCalendar = () => {
     }
   }
 
-  if (isLoading || staffLoading || servicesLoading || clientsLoading || staffShiftsLoading)
+  if (
+    isLoading ||
+    staffLoading ||
+    servicesLoading ||
+    clientsLoading ||
+    workingStaffLoading ||
+    absencesLoading
+  )
     return <Spinner />
 
   if (staffError) {
@@ -935,10 +1240,10 @@ const BookingCalendar = () => {
     )
   }
 
-  if (staffShiftsError) {
+  if (workingStaffError) {
     return (
       <div style={{ padding: '24px', textAlign: 'center', color: '#ef4444' }}>
-        Error loading staff shifts: {staffShiftsError.message}
+        Error loading working staff: {workingStaffError.message}
       </div>
     )
   }
@@ -990,8 +1295,8 @@ const BookingCalendar = () => {
 
   if (view === 'day' && selectedDate) {
     const dayBookings = bookingsByDate[selectedDate] || []
-    const workingStaff = getStaffWorkingOnDay(selectedDate, staff, staffShifts)
-    const staffGridColumns = workingStaff.map(() => '160px').join(' ')
+    const staffGridColumns =
+      workingStaff.length > 0 ? workingStaff.map(() => '160px').join(' ') : '200px'
     const currentTimePosition = getCurrentTimePosition()
     const showCurrentTimeLine = isSelectedDateToday() && currentTimePosition !== null
 
@@ -1087,6 +1392,40 @@ const BookingCalendar = () => {
               }}
             >
               <button
+                onClick={() => setShowLeaveModal(true)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#dc2626',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                }}
+                onMouseOver={(e) => (e.target.style.backgroundColor = '#b91c1c')}
+                onMouseOut={(e) => (e.target.style.backgroundColor = '#dc2626')}
+              >
+                + Add Leave
+              </button>
+              <button
+                onClick={() => setShowShiftModal(true)}
+                style={{
+                  padding: '10px 20px',
+                  backgroundColor: '#059669',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontWeight: '500',
+                  cursor: 'pointer',
+                }}
+                onMouseOver={(e) => (e.target.style.backgroundColor = '#047857')}
+                onMouseOut={(e) => (e.target.style.backgroundColor = '#059669')}
+              >
+                + Add Staff Shift
+              </button>
+              <button
                 onClick={() => setShowCreateModal(true)}
                 style={{
                   padding: '10px 20px',
@@ -1109,6 +1448,87 @@ const BookingCalendar = () => {
             </div>
           </div>
         </div>
+
+        {/* Working Staff Banner */}
+        {workingStaff.length > 0 && (
+          <div
+            style={{
+              padding: '12px 24px',
+              backgroundColor: '#f0f9ff',
+              borderBottom: '1px solid #bfdbfe',
+              fontSize: '14px',
+              color: '#1e40af',
+              textAlign: 'center',
+            }}
+          >
+            <span style={{ fontWeight: '600' }}>👥 Working Staff ({workingStaff.length})</span>
+            <span style={{ fontSize: '12px', marginLeft: '16px', opacity: 0.8 }}>
+              📅 = Specific shift (click 🗑️ to delete) | 🔄 = Recurring weekly shift
+            </span>
+          </div>
+        )}
+
+        {/* Staff on Leave Banner */}
+        {staffAbsences.length > 0 && (
+          <div
+            style={{
+              padding: '12px 24px',
+              backgroundColor: '#fef2f2',
+              borderBottom: '1px solid #fecaca',
+              fontSize: '14px',
+              color: '#991b1b',
+              textAlign: 'center',
+            }}
+          >
+            <span style={{ fontWeight: '600' }}>🏠 Staff on Leave ({staffAbsences.length}): </span>
+            {staffAbsences.map((absence, index) => (
+              <span key={absence.id}>
+                {absence.staff?.name || 'Unknown'} ({absence.absenceType})
+                {index < staffAbsences.length - 1 && ', '}
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* No Staff Message */}
+        {workingStaff.length === 0 && staffAbsences.length === 0 && (
+          <div
+            style={{
+              padding: '16px 24px',
+              backgroundColor: '#fef2f2',
+              borderBottom: '1px solid #fecaca',
+              fontSize: '14px',
+              color: '#991b1b',
+              textAlign: 'center',
+            }}
+          >
+            <span style={{ fontWeight: '600' }}>⚠️ No staff scheduled for this date</span>
+            <span style={{ marginLeft: '16px', opacity: 0.8 }}>
+              Click "Add Staff Shift" to schedule staff for this day
+            </span>
+          </div>
+        )}
+
+        {/* Only Staff on Leave Message */}
+        {workingStaff.length === 0 && staffAbsences.length > 0 && (
+          <div
+            style={{
+              padding: '16px 24px',
+              backgroundColor: '#fef2f2',
+              borderBottom: '1px solid #fecaca',
+              fontSize: '14px',
+              color: '#991b1b',
+              textAlign: 'center',
+            }}
+          >
+            <span style={{ fontWeight: '600' }}>
+              ⚠️ No staff available - all scheduled staff are on leave
+            </span>
+            <span style={{ marginLeft: '16px', opacity: 0.8 }}>
+              Add more staff shifts or check staff availability
+            </span>
+          </div>
+        )}
 
         {/* Drag Instruction Banner */}
         {isDragging && (
@@ -1224,37 +1644,115 @@ const BookingCalendar = () => {
               >
                 Time / Staff
               </div>
-              {workingStaff.map((staffMember) => {
-                const staffName =
-                  typeof staffMember === 'string' ? staffMember : staffMember.name || staffMember.id
-                return (
-                  <div
-                    key={staffMember.id || staffName}
-                    style={{
-                      padding: '12px 8px',
-                      fontWeight: '600',
-                      fontSize: '13px',
-                      textAlign: 'center',
-                      borderRight: '1px solid #e5e7eb',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: '4px',
-                    }}
-                  >
-                    <span style={{ fontSize: '12px' }}>👤</span>
-                    <span
+              {workingStaff.length > 0 ? (
+                workingStaff.map((staffMember) => {
+                  const staffName = staffMember.name || staffMember.id
+                  const hasSpecificShift = staffMember.hasSpecificShift
+                  const hasRecurringShift = staffMember.hasRecurringShift
+                  const specificShifts =
+                    staffMember.shifts?.filter((shift) => shift.specificDate) || []
+
+                  return (
+                    <div
+                      key={staffMember.id}
                       style={{
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
+                        padding: '12px 8px',
+                        fontWeight: '600',
+                        fontSize: '13px',
+                        textAlign: 'center',
+                        borderRight: '1px solid #e5e7eb',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '4px',
+                        backgroundColor: hasSpecificShift ? '#f0fdf4' : 'white',
+                        position: 'relative',
                       }}
                     >
-                      {staffName}
-                    </span>
-                  </div>
-                )
-              })}
+                      <span style={{ fontSize: '12px' }}>👤</span>
+                      <span
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                          flex: 1,
+                        }}
+                      >
+                        {staffName}
+                      </span>
+                      {hasSpecificShift && (
+                        <span style={{ fontSize: '10px', color: '#059669' }}>📅</span>
+                      )}
+                      {hasRecurringShift && (
+                        <span style={{ fontSize: '10px', color: '#2563eb' }}>🔄</span>
+                      )}
+
+                      {/* Delete icon for staff with specific shifts */}
+                      {hasSpecificShift && specificShifts.length > 0 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            // If multiple specific shifts, show confirmation for all
+                            if (specificShifts.length === 1) {
+                              handleDeleteShift(specificShifts[0], staffName)
+                            } else {
+                              const confirmMessage = `${staffName} has ${specificShifts.length} specific shifts today. Delete all specific shifts for this date?`
+                              if (window.confirm(confirmMessage)) {
+                                // Delete all specific shifts for this staff member
+                                specificShifts.forEach((shift) => {
+                                  handleDeleteShift(shift, staffName)
+                                })
+                              }
+                            }
+                          }}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#dc2626',
+                            cursor: 'pointer',
+                            fontSize: '12px',
+                            padding: '2px',
+                            borderRadius: '3px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            width: '16px',
+                            height: '16px',
+                            transition: 'all 0.2s',
+                          }}
+                          onMouseOver={(e) => {
+                            e.target.style.backgroundColor = '#fee2e2'
+                          }}
+                          onMouseOut={(e) => {
+                            e.target.style.backgroundColor = 'transparent'
+                          }}
+                          title={`Delete ${staffName}'s specific shift${
+                            specificShifts.length > 1 ? 's' : ''
+                          } for this date`}
+                        >
+                          🗑️
+                        </button>
+                      )}
+                    </div>
+                  )
+                })
+              ) : (
+                <div
+                  style={{
+                    padding: '12px 8px',
+                    fontWeight: '600',
+                    fontSize: '13px',
+                    textAlign: 'center',
+                    borderRight: '1px solid #e5e7eb',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#6b7280',
+                  }}
+                >
+                  No staff scheduled
+                </div>
+              )}
             </div>
 
             {/* Time Slots */}
@@ -1283,143 +1781,159 @@ const BookingCalendar = () => {
                 >
                   {timeSlot}
                 </div>
-                {workingStaff.map((staffMember) => {
-                  const bookingInfo = getBookingInfo(
-                    staffMember,
-                    timeSlot,
-                    selectedDate,
-                    dayBookings
-                  )
+                {workingStaff.length > 0 ? (
+                  workingStaff.map((staffMember) => {
+                    const bookingInfo = getBookingInfo(
+                      staffMember,
+                      timeSlot,
+                      selectedDate,
+                      dayBookings
+                    )
 
-                  const isDropTarget =
-                    dragTarget?.staff?.id === staffMember.id && dragTarget?.time === timeSlot
+                    const isDropTarget =
+                      dragTarget?.staff?.id === staffMember.id && dragTarget?.time === timeSlot
 
-                  return (
-                    <div
-                      key={`${staffMember.id}-${timeSlot}`}
-                      style={{
-                        position: 'relative',
-                        borderRight: '1px solid #e5e7eb',
-                        backgroundColor: isDropTarget ? '#dbeafe' : 'white',
-                        minHeight: '40px',
-                        transition: 'background-color 0.2s ease',
-                      }}
-                      onDragOver={handleDragOver}
-                      onDragEnter={(e) => handleDragEnter(e, staffMember, timeSlot)}
-                      onDragLeave={handleDragLeave}
-                      onDrop={(e) => handleDrop(e, staffMember, timeSlot)}
-                    >
-                      {bookingInfo ? (
-                        <div
-                          draggable="true"
-                          onDragStart={(e) =>
-                            handleDragStart(e, bookingInfo.booking, staffMember, timeSlot)
-                          }
-                          onDragEnd={handleDragEnd}
-                          style={{
-                            backgroundColor: getBookingColor(
-                              bookingInfo.booking,
-                              bookingInfo.booking.status
-                            ),
-                            color: 'white',
-                            cursor: 'grab',
-                            transition: 'all 0.2s ease',
-                            position: 'absolute',
-                            top: 0,
-                            left: 0,
-                            right: 0,
-                            height: `calc(${bookingInfo.slotsSpanned * 40}px - 2px)`,
-                            zIndex: 10,
-                            padding: '6px 8px',
-                            borderRadius: '4px',
-                            margin: '2px',
-                            boxShadow:
-                              '0 2px 4px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1)',
-                          }}
-                          onClick={() => handleBookingClick(bookingInfo.booking)}
-                          onMouseOver={(e) => {
-                            if (!isDragging) {
-                              e.currentTarget.style.transform = 'scale(1.02)'
-                              // Keep the shadow, just enhance it slightly
-                              e.currentTarget.style.boxShadow =
-                                '0 4px 12px rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.15)'
+                    return (
+                      <div
+                        key={`${staffMember.id}-${timeSlot}`}
+                        style={{
+                          position: 'relative',
+                          borderRight: '1px solid #e5e7eb',
+                          backgroundColor: isDropTarget ? '#dbeafe' : 'white',
+                          minHeight: '40px',
+                          transition: 'background-color 0.2s ease',
+                        }}
+                        onDragOver={handleDragOver}
+                        onDragEnter={(e) => handleDragEnter(e, staffMember, timeSlot)}
+                        onDragLeave={handleDragLeave}
+                        onDrop={(e) => handleDrop(e, staffMember, timeSlot)}
+                      >
+                        {bookingInfo ? (
+                          <div
+                            draggable="true"
+                            onDragStart={(e) =>
+                              handleDragStart(e, bookingInfo.booking, staffMember, timeSlot)
                             }
-                          }}
-                          onMouseOut={(e) => {
-                            e.currentTarget.style.transform = 'scale(1)'
-                            // Restore the original shadow (don't remove it)
-                            e.currentTarget.style.boxShadow =
-                              '0 2px 4px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1)'
-                          }}
-                          title="Drag to reschedule or click to view details"
-                        >
-                          <div
+                            onDragEnd={handleDragEnd}
                             style={{
-                              fontWeight: '600',
-                              fontSize: '11px',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              lineHeight: '1.2',
+                              backgroundColor: getBookingColor(
+                                bookingInfo.booking,
+                                bookingInfo.booking.status
+                              ),
+                              color: 'white',
+                              cursor: 'grab',
+                              transition: 'all 0.2s ease',
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              right: 0,
+                              height: `calc(${bookingInfo.slotsSpanned * 40}px - 2px)`,
+                              zIndex: 10,
+                              padding: '6px 8px',
+                              borderRadius: '4px',
+                              margin: '2px',
+                              boxShadow:
+                                '0 2px 4px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1)',
                             }}
-                          >
-                            {bookingInfo.booking.service}
-                          </div>
-                          <div
-                            style={{
-                              fontSize: '10px',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap',
-                              lineHeight: '1.2',
-                              opacity: 0.9,
-                              marginTop: '2px',
+                            onClick={() => handleBookingClick(bookingInfo.booking)}
+                            onMouseOver={(e) => {
+                              if (!isDragging) {
+                                e.currentTarget.style.transform = 'scale(1.02)'
+                                e.currentTarget.style.boxShadow =
+                                  '0 4px 12px rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.15)'
+                              }
                             }}
+                            onMouseOut={(e) => {
+                              e.currentTarget.style.transform = 'scale(1)'
+                              e.currentTarget.style.boxShadow =
+                                '0 2px 4px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1)'
+                            }}
+                            title="Drag to reschedule or click to view details"
                           >
-                            {bookingInfo.booking.client}
-                          </div>
-                          {/* Only show notes if they exist */}
-                          {bookingInfo.booking.notes && bookingInfo.booking.notes.trim() !== '' && (
+                            <div
+                              style={{
+                                fontWeight: '600',
+                                fontSize: '11px',
+                                overflow: 'hidden',
+                                textOverflow: 'ellipsis',
+                                whiteSpace: 'nowrap',
+                                lineHeight: '1.2',
+                              }}
+                            >
+                              {bookingInfo.booking.service}
+                            </div>
                             <div
                               style={{
                                 fontSize: '10px',
                                 overflow: 'hidden',
-                                fontWeight: 'bold',
                                 textOverflow: 'ellipsis',
                                 whiteSpace: 'nowrap',
                                 lineHeight: '1.2',
-                                color: 'yellow',
+                                opacity: 0.9,
+                                marginTop: '2px',
                               }}
                             >
-                              {bookingInfo.booking.notes}
+                              {bookingInfo.booking.client}
                             </div>
-                          )}
-                          {bookingInfo.booking.numClients > 1 && (
+                            {bookingInfo.booking.notes &&
+                              bookingInfo.booking.notes.trim() !== '' && (
+                                <div
+                                  style={{
+                                    fontSize: '10px',
+                                    overflow: 'hidden',
+                                    fontWeight: 'bold',
+                                    textOverflow: 'ellipsis',
+                                    whiteSpace: 'nowrap',
+                                    lineHeight: '1.2',
+                                    color: 'yellow',
+                                  }}
+                                >
+                                  {bookingInfo.booking.notes}
+                                </div>
+                              )}
+                            {bookingInfo.booking.numClients > 1 && (
+                              <div style={{ fontSize: '9px', opacity: 0.8, marginTop: '2px' }}>
+                                ({bookingInfo.booking.numClients} clients)
+                              </div>
+                            )}
                             <div style={{ fontSize: '9px', opacity: 0.8, marginTop: '2px' }}>
-                              ({bookingInfo.booking.numClients} clients)
+                              {bookingInfo.booking.time} - {bookingInfo.booking.endTime}
                             </div>
-                          )}
-                          <div style={{ fontSize: '9px', opacity: 0.8, marginTop: '2px' }}>
-                            {bookingInfo.booking.time} - {bookingInfo.booking.endTime}
                           </div>
-                        </div>
-                      ) : (
-                        <div
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            height: '40px',
-                            color: '#d1d5db',
-                            fontSize: '12px',
-                          }}
-                        >
-                          -
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
+                        ) : (
+                          <div
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              height: '40px',
+                              color: '#d1d5db',
+                              fontSize: '12px',
+                            }}
+                          >
+                            -
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })
+                ) : (
+                  <div
+                    key={`empty-${timeSlot}`}
+                    style={{
+                      borderRight: '1px solid #e5e7eb',
+                      backgroundColor: 'white',
+                      minHeight: '40px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      color: '#9ca3af',
+                      fontSize: '12px',
+                    }}
+                  >
+                    -
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -1432,6 +1946,7 @@ const BookingCalendar = () => {
                 padding: '16px',
                 borderRadius: '8px',
                 textAlign: 'center',
+                marginBottom: '16px',
               }}
             >
               <div style={{ fontSize: '14px', color: '#1e40af', marginBottom: '4px' }}>
@@ -1441,11 +1956,27 @@ const BookingCalendar = () => {
                 {dayBookings.length}
               </div>
             </div>
+
+            <div
+              style={{
+                backgroundColor: '#f0fdf4',
+                padding: '16px',
+                borderRadius: '8px',
+                textAlign: 'center',
+              }}
+            >
+              <div style={{ fontSize: '14px', color: '#065f46', marginBottom: '4px' }}>
+                👥 Working Staff
+              </div>
+              <div style={{ fontSize: '32px', fontWeight: '700', color: '#065f46' }}>
+                {workingStaff.length}
+              </div>
+            </div>
           </div>
         </div>
 
         {/* Create Booking Modal */}
-        {showCreateModal && (
+        {showCreateModal && workingStaff.length > 0 && (
           <div style={calendarStyles.modalOverlay} onClick={closeModal}>
             <div style={calendarStyles.modal} onClick={(e) => e.stopPropagation()}>
               <div style={calendarStyles.modalHeader}>
@@ -1955,11 +2486,409 @@ const BookingCalendar = () => {
             </div>
           </div>
         )}
+
+        {/* No Staff Warning Modal */}
+        {showCreateModal && workingStaff.length === 0 && (
+          <div style={calendarStyles.modalOverlay} onClick={closeModal}>
+            <div
+              style={{ ...calendarStyles.modal, maxWidth: '400px' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ ...calendarStyles.modalHeader, textAlign: 'center' }}>
+                ⚠️ No Staff Available
+              </div>
+              <div style={{ padding: '20px', textAlign: 'center' }}>
+                <p style={{ color: '#991b1b', marginBottom: '16px' }}>
+                  No staff members are scheduled for this date.
+                </p>
+                <p style={{ color: '#666', fontSize: '14px' }}>
+                  Please add staff shifts first using the &#34;Add Staff Shift&#34; button.
+                </p>
+              </div>
+              <div style={calendarStyles.formButtons}>
+                <button type="button" onClick={closeModal} style={calendarStyles.cancelButton}>
+                  Close
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeModal()
+                    setShowShiftModal(true)
+                  }}
+                  style={calendarStyles.submitButton}
+                >
+                  Add Staff Shift
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Create Staff Shift Modal */}
+        {showShiftModal && (
+          <div style={calendarStyles.modalOverlay} onClick={closeShiftModal}>
+            <div
+              style={{
+                ...calendarStyles.modal,
+                maxWidth: '500px',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={calendarStyles.modalHeader}>
+                Add Staff Shift for{' '}
+                {new Date(selectedDate).toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
+              </div>
+
+              <form onSubmit={handleCreateShift}>
+                {/* Staff Selection */}
+                <div style={calendarStyles.formGroup}>
+                  <label style={calendarStyles.label}>Staff Member *</label>
+                  <select
+                    style={calendarStyles.select}
+                    value={shiftFormData.staffId}
+                    onChange={(e) =>
+                      setShiftFormData((prev) => ({ ...prev, staffId: e.target.value }))
+                    }
+                    required
+                  >
+                    <option value="">Select staff member</option>
+                    {staff.map((staffMember) => (
+                      <option key={staffMember.id} value={staffMember.id}>
+                        {staffMember.name || staffMember.id}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                    This will create a specific shift for this date only
+                  </div>
+                </div>
+
+                {/* Time Selection */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div style={calendarStyles.formGroup}>
+                    <label style={calendarStyles.label}>Start Time *</label>
+                    <select
+                      style={calendarStyles.select}
+                      value={shiftFormData.startTime}
+                      onChange={(e) =>
+                        setShiftFormData((prev) => ({ ...prev, startTime: e.target.value }))
+                      }
+                      required
+                    >
+                      <option value="">Select start time</option>
+                      {timeSlots.map((time) => (
+                        <option key={time} value={time}>
+                          {time}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div style={calendarStyles.formGroup}>
+                    <label style={calendarStyles.label}>End Time *</label>
+                    <select
+                      style={calendarStyles.select}
+                      value={shiftFormData.endTime}
+                      onChange={(e) =>
+                        setShiftFormData((prev) => ({ ...prev, endTime: e.target.value }))
+                      }
+                      required
+                    >
+                      <option value="">Select end time</option>
+                      {timeSlots.map((time) => (
+                        <option key={time} value={time}>
+                          {time}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                {/* Duration Display */}
+                {shiftFormData.startTime && shiftFormData.endTime && (
+                  <div
+                    style={{
+                      ...calendarStyles.formGroup,
+                      backgroundColor: '#f0f9ff',
+                      padding: '12px',
+                      borderRadius: '6px',
+                      border: '1px solid #bfdbfe',
+                    }}
+                  >
+                    <div style={{ fontSize: '14px', color: '#1e40af', fontWeight: '600' }}>
+                      Shift Duration:{' '}
+                      {(() => {
+                        const startMinutes = timeToMinutes(shiftFormData.startTime)
+                        const endMinutes = timeToMinutes(shiftFormData.endTime)
+                        let duration = endMinutes - startMinutes
+
+                        if (duration < 0) duration += 24 * 60 // Handle overnight shifts
+
+                        const hours = Math.floor(duration / 60)
+                        const minutes = duration % 60
+
+                        return `${hours}h ${minutes}m`
+                      })()}
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#1e40af', marginTop: '4px' }}>
+                      📅 This is a specific date shift (one-time only)
+                    </div>
+                  </div>
+                )}
+
+                {/* Notes */}
+                <div style={calendarStyles.formGroup}>
+                  <label style={calendarStyles.label}>Notes (Optional)</label>
+                  <textarea
+                    style={{
+                      ...calendarStyles.input,
+                      minHeight: '80px',
+                      resize: 'vertical',
+                      fontFamily: 'inherit',
+                    }}
+                    value={shiftFormData.notes}
+                    onChange={(e) =>
+                      setShiftFormData((prev) => ({ ...prev, notes: e.target.value }))
+                    }
+                    placeholder="Add any notes about this shift..."
+                  />
+                </div>
+
+                {/* Validation Warning */}
+                {shiftFormData.startTime &&
+                  shiftFormData.endTime &&
+                  shiftFormData.startTime >= shiftFormData.endTime && (
+                    <div
+                      style={{
+                        padding: '12px',
+                        backgroundColor: '#fef2f2',
+                        border: '1px solid #fecaca',
+                        borderRadius: '6px',
+                        color: '#991b1b',
+                        fontSize: '14px',
+                        marginBottom: '16px',
+                      }}
+                    >
+                      ⚠️ End time must be after start time
+                    </div>
+                  )}
+
+                {/* Action Buttons */}
+                <div style={calendarStyles.formButtons}>
+                  <button
+                    type="button"
+                    onClick={closeShiftModal}
+                    style={calendarStyles.cancelButton}
+                    disabled={isCreatingShift}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      isCreatingShift ||
+                      !shiftFormData.staffId ||
+                      !shiftFormData.startTime ||
+                      !shiftFormData.endTime ||
+                      shiftFormData.startTime >= shiftFormData.endTime
+                    }
+                    style={{
+                      ...calendarStyles.submitButton,
+                      backgroundColor: '#059669',
+                      ...(isCreatingShift ||
+                      !shiftFormData.staffId ||
+                      !shiftFormData.startTime ||
+                      !shiftFormData.endTime ||
+                      shiftFormData.startTime >= shiftFormData.endTime
+                        ? { backgroundColor: '#9ca3af', cursor: 'not-allowed' }
+                        : {}),
+                    }}
+                    onMouseOver={(e) => {
+                      if (!e.target.disabled) {
+                        e.target.style.backgroundColor = '#047857'
+                      }
+                    }}
+                    onMouseOut={(e) => {
+                      if (!e.target.disabled) {
+                        e.target.style.backgroundColor = '#059669'
+                      }
+                    }}
+                  >
+                    {isCreatingShift ? 'Creating Shift...' : 'Create Shift'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Create Staff Leave Modal */}
+        {showLeaveModal && (
+          <div style={calendarStyles.modalOverlay} onClick={closeLeaveModal}>
+            <div
+              style={{
+                ...calendarStyles.modal,
+                maxWidth: '500px',
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={calendarStyles.modalHeader}>
+                Add Staff Leave for{' '}
+                {new Date(selectedDate).toLocaleDateString('en-US', {
+                  weekday: 'long',
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                })}
+              </div>
+
+              <form onSubmit={handleCreateLeave}>
+                {/* Staff Selection */}
+                <div style={calendarStyles.formGroup}>
+                  <label style={calendarStyles.label}>Staff Member *</label>
+                  <select
+                    style={calendarStyles.select}
+                    value={leaveFormData.staffId}
+                    onChange={(e) =>
+                      setLeaveFormData((prev) => ({ ...prev, staffId: e.target.value }))
+                    }
+                    required
+                  >
+                    <option value="">Select staff member</option>
+                    {staff.map((staffMember) => (
+                      <option key={staffMember.id} value={staffMember.id}>
+                        {staffMember.name || staffMember.id}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                    This will record an absence for this specific date
+                  </div>
+                </div>
+
+                {/* Leave Type Selection */}
+                <div style={calendarStyles.formGroup}>
+                  <label style={calendarStyles.label}>Leave Type *</label>
+                  <select
+                    style={calendarStyles.select}
+                    value={leaveFormData.absenceType}
+                    onChange={(e) =>
+                      setLeaveFormData((prev) => ({ ...prev, absenceType: e.target.value }))
+                    }
+                    required
+                  >
+                    {absenceTypes.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Notes */}
+                <div style={calendarStyles.formGroup}>
+                  <label style={calendarStyles.label}>Notes (Optional)</label>
+                  <textarea
+                    style={{
+                      ...calendarStyles.input,
+                      minHeight: '80px',
+                      resize: 'vertical',
+                      fontFamily: 'inherit',
+                    }}
+                    value={leaveFormData.notes}
+                    onChange={(e) =>
+                      setLeaveFormData((prev) => ({ ...prev, notes: e.target.value }))
+                    }
+                    placeholder="Add any notes about this leave..."
+                  />
+                </div>
+
+                {/* Leave Summary */}
+                {leaveFormData.staffId && (
+                  <div
+                    style={{
+                      ...calendarStyles.formGroup,
+                      backgroundColor: '#fef2f2',
+                      padding: '12px',
+                      borderRadius: '6px',
+                      border: '1px solid #fecaca',
+                    }}
+                  >
+                    <div
+                      style={{
+                        fontSize: '14px',
+                        color: '#991b1b',
+                        fontWeight: '600',
+                        marginBottom: '4px',
+                      }}
+                    >
+                      Leave Summary:
+                    </div>
+                    <div style={{ fontSize: '13px', color: '#991b1b' }}>
+                      {staff.find((s) => s.id === parseInt(leaveFormData.staffId))?.name} will be
+                      marked as <strong>{leaveFormData.absenceType}</strong> on{' '}
+                      {new Date(selectedDate).toLocaleDateString('en-US', {
+                        weekday: 'long',
+                        month: 'long',
+                        day: 'numeric',
+                      })}
+                    </div>
+                    <div style={{ fontSize: '12px', color: '#991b1b', marginTop: '4px' }}>
+                      ⚠️ This staff member will not be available for bookings on this date
+                    </div>
+                  </div>
+                )}
+
+                {/* Action Buttons */}
+                <div style={calendarStyles.formButtons}>
+                  <button
+                    type="button"
+                    onClick={closeLeaveModal}
+                    style={calendarStyles.cancelButton}
+                    disabled={isCreatingLeave}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={
+                      isCreatingLeave || !leaveFormData.staffId || !leaveFormData.absenceType
+                    }
+                    style={{
+                      ...calendarStyles.submitButton,
+                      backgroundColor: '#dc2626',
+                      ...(isCreatingLeave || !leaveFormData.staffId || !leaveFormData.absenceType
+                        ? { backgroundColor: '#9ca3af', cursor: 'not-allowed' }
+                        : {}),
+                    }}
+                    onMouseOver={(e) => {
+                      if (!e.target.disabled) {
+                        e.target.style.backgroundColor = '#b91c1c'
+                      }
+                    }}
+                    onMouseOut={(e) => {
+                      if (!e.target.disabled) {
+                        e.target.style.backgroundColor = '#dc2626'
+                      }
+                    }}
+                  >
+                    {isCreatingLeave ? 'Adding Leave...' : 'Add Leave'}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
 
-  // Calendar View
+  // Calendar View (unchanged from original)
   return (
     <div style={calendarStyles.container}>
       {/* Calendar Header */}

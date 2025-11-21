@@ -7,7 +7,7 @@ import {
   HiOutlineHomeModern,
   HiOutlineUsers,
 } from 'react-icons/hi2'
-import { Book, Calculator } from 'lucide-react'
+import { Book, Calculator, CalendarCheck, Notebook, NotebookIcon, NotebookPen } from 'lucide-react'
 
 const NavList = styled.ul`
   display: flex;
@@ -84,20 +84,26 @@ function MainNav() {
         </li>
         <li>
           <StyledLink to="/vouchers">
-            <HiOutlineCalendarDays />
+            <NotebookPen />
             <span>Vouchers</span>
           </StyledLink>
         </li>
         <li>
-          <StyledLink to="/services">
-            <HiOutlineHomeModern />
-            <span>Services</span>
+          <StyledLink to="/roster">
+            <CalendarCheck />
+            <span>Roster</span>
           </StyledLink>
         </li>
         <li>
           <StyledLink to="/clients">
             <HiOutlineUsers />
             <span>Clients</span>
+          </StyledLink>
+        </li>
+        <li>
+          <StyledLink to="/services">
+            <HiOutlineHomeModern />
+            <span>Services</span>
           </StyledLink>
         </li>
       </NavList>
