@@ -197,6 +197,74 @@ const useStaffWorkingOnDate = (date) => {
   return { workingStaff, isLoading, error }
 }
 
+const isTimeSlotAvailable = (
+  timeSlot,
+  staffId,
+  dayBookings,
+  selectedDate,
+  serviceDuration = 60
+) => {
+  if (!staffId || !dayBookings || dayBookings.length === 0) return true
+
+  const slotStartMinutes = timeToMinutes(timeSlot)
+  const slotEndMinutes = slotStartMinutes + serviceDuration
+
+  // Check for conflicts with existing bookings for this staff member
+  const hasConflict = dayBookings.some((booking) => {
+    // Only check bookings for the same staff member
+    if (parseInt(booking.staffId) !== parseInt(staffId)) return false
+
+    const bookingStartMinutes = timeToMinutes(booking.time)
+    const bookingEndMinutes = timeToMinutes(booking.endTime)
+
+    // Check if the time slots overlap
+    return (
+      (slotStartMinutes >= bookingStartMinutes && slotStartMinutes < bookingEndMinutes) ||
+      (slotEndMinutes > bookingStartMinutes && slotEndMinutes <= bookingEndMinutes) ||
+      (slotStartMinutes <= bookingStartMinutes && slotEndMinutes >= bookingEndMinutes)
+    )
+  })
+
+  return !hasConflict
+}
+
+// Add this function after isTimeSlotAvailable
+const getAvailableTimeSlotsForConsecutiveBookings = (
+  serviceIds,
+  staffAssignments,
+  dayBookings,
+  services,
+  selectedDate
+) => {
+  if (!serviceIds || serviceIds.length === 0) return timeSlots
+
+  return timeSlots.filter((startTime) => {
+    let currentTime = startTime
+
+    // Check if all services can be scheduled consecutively
+    for (const serviceId of serviceIds) {
+      const service = services.find((s) => s.id.toString() === serviceId)
+      const staffId = staffAssignments[serviceId]
+
+      if (!service || !staffId) return false
+
+      // Check if this time slot is available for this staff member
+      if (!isTimeSlotAvailable(currentTime, staffId, dayBookings, selectedDate, service.duration)) {
+        return false
+      }
+
+      // Move to next time slot for next service
+      const [hours, minutes] = currentTime.split(':').map(Number)
+      const startDate = new Date()
+      startDate.setHours(hours, minutes, 0, 0)
+      const endDate = new Date(startDate.getTime() + service.duration * 60000)
+      currentTime = endDate.toTimeString().slice(0, 5)
+    }
+
+    return true
+  })
+}
+
 // Custom hook to get staff absences for a specific date
 const useStaffAbsences = (date) => {
   const [absences, setAbsences] = useState([])
@@ -291,6 +359,12 @@ const timeSlots = [
   '18:30',
   '18:45',
   '19:00',
+  '19:15',
+  '19:30',
+  '19:45',
+  '20:00',
+  '20:15',
+  '20:30',
 ]
 
 // Add this helper function near the top with other helper functions
@@ -415,6 +489,224 @@ const BookingCalendar = () => {
     createSeparateBookings: false,
   })
 
+  const { bookings, isLoading, refetch } = useBookings()
+  const { staff, isLoading: staffLoading, error: staffError } = useStaff()
+  const { services, isLoading: servicesLoading, error: servicesError } = useServices()
+  const { clients, isLoading: clientsLoading, error: clientsError } = useClients()
+
+  // Transform your booking data to include date and time information
+  const transformedBookings = useMemo(() => {
+    if (!bookings || bookings.length === 0 || staff.length === 0) return []
+
+    return bookings.map((booking) => {
+      let startTime, endTime
+
+      if (booking.startTime) {
+        if (typeof booking.startTime === 'string') {
+          startTime = new Date(booking.startTime)
+        } else {
+          startTime = booking.startTime
+        }
+      } else {
+        startTime = new Date()
+      }
+
+      if (booking.endTime) {
+        if (typeof booking.endTime === 'string') {
+          endTime = new Date(booking.endTime)
+        } else {
+          endTime = booking.endTime
+        }
+      } else {
+        endTime = new Date(startTime.getTime() + 60 * 60000)
+      }
+
+      if (isNaN(startTime.getTime())) {
+        console.warn('Invalid startTime for booking:', booking.id, booking.startTime)
+        startTime = new Date()
+      }
+
+      if (isNaN(endTime.getTime())) {
+        console.warn('Invalid endTime for booking:', booking.id, booking.endTime)
+        endTime = new Date(startTime.getTime() + 60 * 60000)
+      }
+
+      const localStartHours = startTime.getHours()
+      const localStartMinutes = startTime.getMinutes()
+      const localEndHours = endTime.getHours()
+      const localEndMinutes = endTime.getMinutes()
+
+      const formatTime = (hours, minutes) => {
+        return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
+      }
+
+      let staffMember = 'Any'
+      if (booking.staffId && staff.length > 0) {
+        const foundStaff = staff.find((s) => s.id === booking.staffId)
+        if (foundStaff) {
+          staffMember = foundStaff.name || foundStaff.id
+        }
+      }
+
+      let serviceDisplay = 'Service'
+      if (Array.isArray(booking.services)) {
+        serviceDisplay = booking.services.map((s) => s.name).join(', ')
+      } else if (booking.services?.name) {
+        serviceDisplay = booking.services.name
+      } else if (booking.serviceIds) {
+        try {
+          const serviceIdsArray = Array.isArray(booking.serviceIds)
+            ? booking.serviceIds
+            : JSON.parse(booking.serviceIds)
+          serviceDisplay =
+            serviceIdsArray.length > 1 ? `${serviceIdsArray.length} Services` : 'Service'
+        } catch (e) {
+          serviceDisplay = 'Service'
+        }
+      }
+
+      const transformedBooking = {
+        id: booking.id,
+        originalBooking: booking,
+        service: serviceDisplay,
+        client: booking.client?.fullName || booking.client?.email || booking.name || booking.phone,
+        date:
+          booking.date ||
+          (() => {
+            const year = startTime.getFullYear()
+            const month = String(startTime.getMonth() + 1).padStart(2, '0')
+            const day = String(startTime.getDate()).padStart(2, '0')
+            return `${year}-${month}-${day}`
+          })(),
+        time: formatTime(localStartHours, localStartMinutes),
+        endTime: formatTime(localEndHours, localEndMinutes),
+        staff: staffMember,
+        staffId: booking.staffId,
+        status: booking.status || 'pending',
+        amount: booking.totalPrice || 0,
+        numClients: booking.numClients || 1,
+        duration: Math.round((endTime - startTime) / (1000 * 60)),
+        created_at: booking.created_at,
+        notes: booking.notes || '',
+      }
+
+      return transformedBooking
+    })
+  }, [bookings, staff])
+
+  // Get bookings grouped by date
+  const bookingsByDate = useMemo(() => {
+    const grouped = transformedBookings.reduce((acc, booking) => {
+      const date = booking.date
+      if (!acc[date]) acc[date] = []
+      acc[date].push(booking)
+      return acc
+    }, {})
+
+    return grouped
+  }, [transformedBookings])
+
+  // Calculate total duration and price based on selected services
+  const selectedServicesInfo = useMemo(() => {
+    if (!services || createFormData.selectedServiceIds.length === 0) {
+      return { totalDuration: 0, totalPrice: '0', serviceNames: [] }
+    }
+
+    const selectedServices = services.filter((service) =>
+      createFormData.selectedServiceIds.includes(service.id.toString())
+    )
+
+    const totalDuration = selectedServices.reduce(
+      (sum, service) => sum + (service.duration || 0),
+      0
+    )
+
+    let totalPriceNum = 0
+    let hasPlus = false
+    let hasNonNumeric = false
+
+    selectedServices.forEach((service) => {
+      const regularPriceStr = service.regularPrice ? String(service.regularPrice) : '0'
+      const discountStr = service.discount ? String(service.discount) : '0'
+
+      if (regularPriceStr.includes('+')) {
+        hasPlus = true
+      }
+
+      const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
+      const discountNum = parseFloat(discountStr.replace('+', ''))
+
+      if (isNaN(regularPriceNum) || isNaN(discountNum)) {
+        hasNonNumeric = true
+      } else {
+        totalPriceNum += regularPriceNum - discountNum
+      }
+    })
+
+    let totalPrice
+    if (hasNonNumeric) {
+      totalPrice = 'POA'
+    } else if (hasPlus) {
+      totalPrice = `${totalPriceNum}+`
+    } else {
+      totalPrice = `${totalPriceNum}`
+    }
+
+    const serviceNames = selectedServices.map((service) => service.name)
+
+    return { totalDuration, totalPrice, serviceNames, selectedServices }
+  }, [services, createFormData.selectedServiceIds])
+
+  useEffect(() => {
+    // Reset start time if it becomes unavailable when staff/services change
+    if (createFormData.startTime) {
+      let isStillAvailable = false
+
+      // Get the current day's bookings
+      const currentDayBookings = bookingsByDate[selectedDate] || []
+
+      if (createFormData.createSeparateBookings && createFormData.selectedServiceIds.length > 1) {
+        // Check if start time is still available for consecutive bookings
+        const availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
+          createFormData.selectedServiceIds,
+          createFormData.serviceStaffAssignments,
+          currentDayBookings, // FIX: Use currentDayBookings instead of dayBookings
+          services,
+          selectedDate
+        )
+        isStillAvailable = availableSlots.includes(createFormData.startTime)
+      } else if (createFormData.staffId) {
+        // Check if start time is still available for single booking
+        isStillAvailable = isTimeSlotAvailable(
+          createFormData.startTime,
+          createFormData.staffId,
+          currentDayBookings, // FIX: Use currentDayBookings instead of dayBookings
+          selectedDate,
+          selectedServicesInfo.totalDuration
+        )
+      }
+
+      if (!isStillAvailable) {
+        setCreateFormData((prev) => ({
+          ...prev,
+          startTime: '',
+        }))
+
+        console.log('⚠️ Selected time slot is no longer available - cleared selection')
+      }
+    }
+  }, [
+    createFormData.startTime, // FIX: Add missing dependency
+    createFormData.staffId,
+    createFormData.serviceStaffAssignments,
+    createFormData.selectedServiceIds,
+    createFormData.createSeparateBookings,
+    selectedServicesInfo.totalDuration,
+    bookingsByDate, // FIX: Use bookingsByDate instead of dayBookings
+    selectedDate,
+    services,
+  ])
+
   useEffect(() => {
     const dateParam = searchParams.get('date')
     const viewParam = searchParams.get('view')
@@ -450,11 +742,6 @@ const BookingCalendar = () => {
       },
     }))
   }
-
-  const { bookings, isLoading, refetch } = useBookings()
-  const { staff, isLoading: staffLoading, error: staffError } = useStaff()
-  const { services, isLoading: servicesLoading, error: servicesError } = useServices()
-  const { clients, isLoading: clientsLoading, error: clientsError } = useClients()
 
   // Use the enhanced hook for staff working on the selected date
   const {
@@ -752,57 +1039,6 @@ const BookingCalendar = () => {
     )
   }, [services, serviceSearchTerm])
 
-  // Calculate total duration and price based on selected services
-  const selectedServicesInfo = useMemo(() => {
-    if (!services || createFormData.selectedServiceIds.length === 0) {
-      return { totalDuration: 0, totalPrice: '0', serviceNames: [] }
-    }
-
-    const selectedServices = services.filter((service) =>
-      createFormData.selectedServiceIds.includes(service.id.toString())
-    )
-
-    const totalDuration = selectedServices.reduce(
-      (sum, service) => sum + (service.duration || 0),
-      0
-    )
-
-    let totalPriceNum = 0
-    let hasPlus = false
-    let hasNonNumeric = false
-
-    selectedServices.forEach((service) => {
-      const regularPriceStr = service.regularPrice ? String(service.regularPrice) : '0'
-      const discountStr = service.discount ? String(service.discount) : '0'
-
-      if (regularPriceStr.includes('+')) {
-        hasPlus = true
-      }
-
-      const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
-      const discountNum = parseFloat(discountStr.replace('+', ''))
-
-      if (isNaN(regularPriceNum) || isNaN(discountNum)) {
-        hasNonNumeric = true
-      } else {
-        totalPriceNum += regularPriceNum - discountNum
-      }
-    })
-
-    let totalPrice
-    if (hasNonNumeric) {
-      totalPrice = 'POA'
-    } else if (hasPlus) {
-      totalPrice = `${totalPriceNum}+`
-    } else {
-      totalPrice = `${totalPriceNum}`
-    }
-
-    const serviceNames = selectedServices.map((service) => service.name)
-
-    return { totalDuration, totalPrice, serviceNames, selectedServices }
-  }, [services, createFormData.selectedServiceIds])
-
   // Calculate end time based on start time and total duration
   const calculateEndTime = (startTime, durationInMinutes) => {
     if (!startTime || !durationInMinutes) return ''
@@ -814,118 +1050,6 @@ const BookingCalendar = () => {
     const endDate = new Date(startDate.getTime() + durationInMinutes * 60000)
     return endDate.toTimeString().slice(0, 5)
   }
-
-  // Transform your booking data to include date and time information
-  const transformedBookings = useMemo(() => {
-    if (!bookings || bookings.length === 0 || staff.length === 0) return []
-
-    return bookings.map((booking) => {
-      let startTime, endTime
-
-      if (booking.startTime) {
-        if (typeof booking.startTime === 'string') {
-          startTime = new Date(booking.startTime)
-        } else {
-          startTime = booking.startTime
-        }
-      } else {
-        startTime = new Date()
-      }
-
-      if (booking.endTime) {
-        if (typeof booking.endTime === 'string') {
-          endTime = new Date(booking.endTime)
-        } else {
-          endTime = booking.endTime
-        }
-      } else {
-        endTime = new Date(startTime.getTime() + 60 * 60000)
-      }
-
-      if (isNaN(startTime.getTime())) {
-        console.warn('Invalid startTime for booking:', booking.id, booking.startTime)
-        startTime = new Date()
-      }
-
-      if (isNaN(endTime.getTime())) {
-        console.warn('Invalid endTime for booking:', booking.id, booking.endTime)
-        endTime = new Date(startTime.getTime() + 60 * 60000)
-      }
-
-      const localStartHours = startTime.getHours()
-      const localStartMinutes = startTime.getMinutes()
-      const localEndHours = endTime.getHours()
-      const localEndMinutes = endTime.getMinutes()
-
-      const formatTime = (hours, minutes) => {
-        return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`
-      }
-
-      let staffMember = 'Any'
-      if (booking.staffId && staff.length > 0) {
-        const foundStaff = staff.find((s) => s.id === booking.staffId)
-        if (foundStaff) {
-          staffMember = foundStaff.name || foundStaff.id
-        }
-      }
-
-      let serviceDisplay = 'Service'
-      if (Array.isArray(booking.services)) {
-        serviceDisplay = booking.services.map((s) => s.name).join(', ')
-      } else if (booking.services?.name) {
-        serviceDisplay = booking.services.name
-      } else if (booking.serviceIds) {
-        try {
-          const serviceIdsArray = Array.isArray(booking.serviceIds)
-            ? booking.serviceIds
-            : JSON.parse(booking.serviceIds)
-          serviceDisplay =
-            serviceIdsArray.length > 1 ? `${serviceIdsArray.length} Services` : 'Service'
-        } catch (e) {
-          serviceDisplay = 'Service'
-        }
-      }
-
-      const transformedBooking = {
-        id: booking.id,
-        originalBooking: booking,
-        service: serviceDisplay,
-        client: booking.client?.fullName || booking.client?.email || booking.name || booking.phone,
-        date:
-          booking.date ||
-          (() => {
-            const year = startTime.getFullYear()
-            const month = String(startTime.getMonth() + 1).padStart(2, '0')
-            const day = String(startTime.getDate()).padStart(2, '0')
-            return `${year}-${month}-${day}`
-          })(),
-        time: formatTime(localStartHours, localStartMinutes),
-        endTime: formatTime(localEndHours, localEndMinutes),
-        staff: staffMember,
-        staffId: booking.staffId,
-        status: booking.status || 'pending',
-        amount: booking.totalPrice || 0,
-        numClients: booking.numClients || 1,
-        duration: Math.round((endTime - startTime) / (1000 * 60)),
-        created_at: booking.created_at,
-        notes: booking.notes || '',
-      }
-
-      return transformedBooking
-    })
-  }, [bookings, staff])
-
-  // Get bookings grouped by date
-  const bookingsByDate = useMemo(() => {
-    const grouped = transformedBookings.reduce((acc, booking) => {
-      const date = booking.date
-      if (!acc[date]) acc[date] = []
-      acc[date].push(booking)
-      return acc
-    }, {})
-
-    return grouped
-  }, [transformedBookings])
 
   // Filter bookings for current month
   const currentMonthBookings = useMemo(() => {
@@ -2378,9 +2502,15 @@ const BookingCalendar = () => {
                   </div>
                 )}
 
+                {/* Replace your existing Start Time section with this FIXED version: */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div style={calendarStyles.formGroup}>
-                    <label style={calendarStyles.label}>Start Time</label>
+                    <label style={calendarStyles.label}>
+                      {createFormData.createSeparateBookings &&
+                      createFormData.selectedServiceIds.length > 1
+                        ? 'Start Time (for first service)'
+                        : 'Start Time'}
+                    </label>
                     <select
                       style={calendarStyles.select}
                       value={createFormData.startTime}
@@ -2390,12 +2520,107 @@ const BookingCalendar = () => {
                       required
                     >
                       <option value="">Select time</option>
-                      {timeSlots.map((time) => (
-                        <option key={time} value={time}>
-                          {time}
-                        </option>
-                      ))}
+                      {(() => {
+                        let availableSlots = []
+                        const currentDayBookings = bookingsByDate[selectedDate] || [] // FIX: Get day bookings
+
+                        if (
+                          createFormData.createSeparateBookings &&
+                          createFormData.selectedServiceIds.length > 1
+                        ) {
+                          // For separate bookings - check consecutive availability
+                          availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
+                            createFormData.selectedServiceIds,
+                            createFormData.serviceStaffAssignments,
+                            currentDayBookings, // FIX: Use currentDayBookings
+                            services,
+                            selectedDate
+                          )
+                        } else {
+                          // For single booking - filter by staff availability
+                          availableSlots = timeSlots.filter((timeSlot) => {
+                            return isTimeSlotAvailable(
+                              timeSlot,
+                              createFormData.staffId,
+                              currentDayBookings, // FIX: Use currentDayBookings
+                              selectedDate,
+                              selectedServicesInfo.totalDuration
+                            )
+                          })
+                        }
+
+                        return availableSlots.map((time) => (
+                          <option key={time} value={time}>
+                            {time}
+                          </option>
+                        ))
+                      })()}
                     </select>
+
+                    {/* Show helpful messages */}
+                    {(() => {
+                      let availableCount = 0
+                      const currentDayBookings = bookingsByDate[selectedDate] || [] // FIX: Get day bookings
+
+                      if (
+                        createFormData.createSeparateBookings &&
+                        createFormData.selectedServiceIds.length > 1
+                      ) {
+                        availableCount = getAvailableTimeSlotsForConsecutiveBookings(
+                          createFormData.selectedServiceIds,
+                          createFormData.serviceStaffAssignments,
+                          currentDayBookings, // FIX: Use currentDayBookings
+                          services,
+                          selectedDate
+                        ).length
+                      } else if (createFormData.staffId) {
+                        availableCount = timeSlots.filter((timeSlot) =>
+                          isTimeSlotAvailable(
+                            timeSlot,
+                            createFormData.staffId,
+                            currentDayBookings, // FIX: Use currentDayBookings
+                            selectedDate,
+                            selectedServicesInfo.totalDuration
+                          )
+                        ).length
+                      }
+
+                      if (
+                        availableCount === 0 &&
+                        (createFormData.staffId ||
+                          (createFormData.createSeparateBookings &&
+                            Object.keys(createFormData.serviceStaffAssignments).length > 0))
+                      ) {
+                        return (
+                          <div
+                            style={{
+                              fontSize: '12px',
+                              color: '#dc2626',
+                              marginTop: '4px',
+                              padding: '8px',
+                              backgroundColor: '#fee2e2',
+                              borderRadius: '4px',
+                            }}
+                          >
+                            ⚠️ No available time slots for the selected configuration
+                          </div>
+                        )
+                      } else if (availableCount > 0) {
+                        return (
+                          <div style={{ fontSize: '12px', color: '#059669', marginTop: '4px' }}>
+                            ✓ {availableCount} time slot{availableCount !== 1 ? 's' : ''} available
+                          </div>
+                        )
+                      }
+
+                      return (
+                        <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                          {createFormData.createSeparateBookings
+                            ? 'Select staff for all services to see available times'
+                            : 'Select a staff member to see available times'}
+                        </div>
+                      )
+                    })()}
                   </div>
 
                   <div style={calendarStyles.formGroup}>

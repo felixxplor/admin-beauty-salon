@@ -25,3 +25,9 @@ dist-ssr
 
 # Environment and config files
 .env
+
+# Capacitor
+android/
+ios/
+*.apk
+*.aab

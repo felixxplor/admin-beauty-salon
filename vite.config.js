@@ -1,9 +1,8 @@
-import dotenv from "dotenv";
-import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-// import process from "process";
+import dotenv from 'dotenv'
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
 
-dotenv.config();
+dotenv.config()
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -11,9 +10,16 @@ export default defineConfig({
   server: {
     open: true,
     port: 3000,
-    host: "0.0.0.0",
+    host: '0.0.0.0',
   },
   define: {
-    "process.env": process.env,
+    'process.env': process.env,
   },
-});
+  build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
+    base: './',
+    minify: 'esbuild', // Hoặc xóa dòng này, vì esbuild là default
+    sourcemap: false,
+  },
+})

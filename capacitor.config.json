@@ -1,0 +1,8 @@
+{
+  "appId": "au.com.wonder8.pos",
+  "appName": "Wonder8 POS",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  }
+}
