@@ -105,6 +105,8 @@ const VoucherPaymentModal = ({
   const [message, setMessage] = useState({ type: '', text: '' })
   const [isProcessing, setIsProcessing] = useState(false)
 
+  const [paymentCompleted, setPaymentCompleted] = useState(false)
+
   const totalAmount = parseFloat(voucherData?.amount || 0)
   const change =
     paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - totalAmount : 0
@@ -114,6 +116,9 @@ const VoucherPaymentModal = ({
       setCashReceived('')
       setMessage({ type: '', text: '' })
       setPaymentMethod('cash')
+      // NEW: Reset payment completion state
+      setPaymentCompleted(false)
+      setIsProcessing(false)
     }
   }, [isOpen])
 
@@ -145,6 +150,10 @@ const VoucherPaymentModal = ({
   }
 
   const processPayment = async () => {
+    if (isProcessing || paymentCompleted) {
+      return
+    }
+
     if (paymentMethod === 'cash') {
       const received = parseFloat(cashReceived)
       if (!received || received < totalAmount) {
@@ -240,6 +249,7 @@ const VoucherPaymentModal = ({
         status: 'active',
       })
 
+      setPaymentCompleted(true)
       setMessage({ type: 'success', text: 'Payment completed successfully!' })
 
       setTimeout(() => {
@@ -282,10 +292,21 @@ const VoucherPaymentModal = ({
 
         {message.text && (
           <div
-            style={
-              message.type === 'success' ? modalStyles.successMessage : modalStyles.errorMessage
-            }
+            style={{
+              ...(message.type === 'success'
+                ? modalStyles.successMessage
+                : modalStyles.errorMessage),
+              // NEW: Enhanced styling for completion
+              ...(paymentCompleted
+                ? {
+                    border: '2px solid #10B981',
+                    fontWeight: '600',
+                    backgroundColor: '#ECFDF5',
+                  }
+                : {}),
+            }}
           >
+            {paymentCompleted && '✓ '}
             {message.text}
           </div>
         )}
@@ -336,19 +357,28 @@ const VoucherPaymentModal = ({
         {/* Payment Method Selection */}
         <div style={modalStyles.formGroup}>
           <label style={modalStyles.label}>Payment Method</label>
-          <div style={{ display: 'flex', gap: '12px', marginBottom: '16px' }}>
-            {['cash', 'card', 'eftpos'].map((method) => (
+          <div
+            style={{
+              display: 'flex',
+              gap: '12px',
+              marginBottom: '16px',
+              opacity: paymentCompleted ? 0.5 : 1, // NEW: Fade out after completion
+              pointerEvents: paymentCompleted ? 'none' : 'auto', // NEW: Disable interaction
+            }}
+          >
+            {['cash', 'card', 'payid'].map((method) => (
               <button
                 key={method}
                 type="button"
                 onClick={() => setPaymentMethod(method)}
+                disabled={paymentCompleted} // NEW: Disable after completion
                 style={{
                   flex: 1,
                   padding: '12px',
                   border: paymentMethod === method ? '2px solid #007bff' : '2px solid #e5e7eb',
                   backgroundColor: paymentMethod === method ? '#eff6ff' : 'white',
                   borderRadius: '8px',
-                  cursor: 'pointer',
+                  cursor: paymentCompleted ? 'not-allowed' : 'pointer', // NEW: Change cursor
                   fontSize: '14px',
                   fontWeight: paymentMethod === method ? '600' : '500',
                   color: paymentMethod === method ? '#007bff' : '#374151',
@@ -357,7 +387,7 @@ const VoucherPaymentModal = ({
               >
                 {method === 'cash' && '💵 Cash'}
                 {method === 'card' && '💳 Card'}
-                {method === 'eftpos' && '💰 EFTPOS'}
+                {method === 'payid' && '💰 PayID'}
               </button>
             ))}
           </div>
@@ -373,9 +403,13 @@ const VoucherPaymentModal = ({
               min={totalAmount}
               value={cashReceived}
               onChange={(e) => setCashReceived(e.target.value)}
-              style={modalStyles.input}
+              style={{
+                ...modalStyles.input,
+                opacity: paymentCompleted ? 0.5 : 1, // NEW: Fade out after completion
+              }}
               placeholder="Enter amount received"
-              autoFocus
+              disabled={paymentCompleted} // NEW: Disable after completion
+              autoFocus={!paymentCompleted} // NEW: Only autofocus if not completed
             />
             {cashReceived && parseFloat(cashReceived) >= totalAmount && (
               <div
@@ -399,22 +433,30 @@ const VoucherPaymentModal = ({
           <button
             type="button"
             onClick={onClose}
-            style={modalStyles.cancelButton}
+            style={{
+              ...modalStyles.cancelButton,
+              opacity: paymentCompleted ? 0.5 : 1, // NEW: Fade out cancel button
+            }}
             disabled={isProcessing}
           >
-            Cancel
+            {paymentCompleted ? 'Close' : 'Cancel'}
           </button>
+
           <button
             type="button"
             onClick={processPayment}
             style={{
               ...modalStyles.submitButton,
-              backgroundColor: '#059669',
-              ...(isProcessing ? modalStyles.submitButtonDisabled : {}),
+              backgroundColor: paymentCompleted ? '#10B981' : '#059669', // NEW: Green when completed
+              ...(isProcessing || paymentCompleted ? modalStyles.submitButtonDisabled : {}),
             }}
-            disabled={isProcessing}
+            disabled={isProcessing || paymentCompleted} // NEW: Disable when completed
           >
-            {isProcessing ? 'Processing...' : '💰 Pay & Complete'}
+            {paymentCompleted
+              ? '✓ Payment Completed'
+              : isProcessing
+              ? 'Processing...'
+              : '💰 Pay & Complete'}
           </button>
         </div>
       </div>

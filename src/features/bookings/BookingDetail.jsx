@@ -668,6 +668,93 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
   const [discount, setDiscount] = useState('')
   const [discountType, setDiscountType] = useState('amount') // 'amount' or 'percentage'
 
+  const [voucherCode, setVoucherCode] = useState('')
+  const [voucherData, setVoucherData] = useState(null)
+  const [voucherLoading, setVoucherLoading] = useState(false)
+  const [voucherError, setVoucherError] = useState('')
+  const [appliedVouchers, setAppliedVouchers] = useState([])
+
+  const [paymentCompleted, setPaymentCompleted] = useState(false)
+
+  // Reset payment state when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setPaymentCompleted(false)
+      setMessage({ type: '', text: '' })
+      setIsProcessing(false)
+      // Optionally reset other fields
+      setCashReceived('')
+      setDiscount('')
+      setVoucherCode('')
+      setAppliedVouchers([])
+      setVoucherData(null)
+      setVoucherError('')
+    }
+  }, [isOpen])
+
+  const validateVoucher = async (code) => {
+    setVoucherLoading(true)
+    setVoucherError('')
+
+    try {
+      const { data, error } = await supabase
+        .from('vouchers')
+        .select('*')
+        .eq('code', code.toUpperCase().trim())
+        .eq('status', 'active')
+        .single()
+
+      if (error || !data) {
+        throw new Error('Invalid voucher code')
+      }
+
+      // Check if voucher is expired
+      const now = new Date()
+      const expiryDate = new Date(data.expiry_date)
+
+      if (expiryDate < now) {
+        throw new Error('This voucher has expired')
+      }
+
+      // Check if voucher has remaining balance
+      if (data.balance <= 0) {
+        throw new Error('This voucher has been fully redeemed')
+      }
+
+      // Check if voucher is already applied
+      if (appliedVouchers.find((v) => v.code === code.toUpperCase().trim())) {
+        throw new Error('This voucher is already applied')
+      }
+
+      setVoucherData(data)
+      return data
+    } catch (error) {
+      setVoucherError(error.message)
+      return null
+    } finally {
+      setVoucherLoading(false)
+    }
+  }
+
+  const applyVoucher = () => {
+    if (voucherData) {
+      const discountAmount = Math.min(voucherData.balance, totalAmount)
+      setAppliedVouchers([
+        ...appliedVouchers,
+        {
+          ...voucherData,
+          appliedAmount: discountAmount,
+        },
+      ])
+      setVoucherCode('')
+      setVoucherData(null)
+    }
+  }
+
+  const removeAppliedVoucher = (voucherId) => {
+    setAppliedVouchers(appliedVouchers.filter((v) => v.id !== voucherId))
+  }
+
   const subtotal = parseFloat(booking?.totalPrice || 0)
 
   // Calculate discount
@@ -679,7 +766,10 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
     discountAmount = discountValue
   }
 
-  const totalAmount = Math.max(0, subtotal - discountAmount) // Ensure total is not negative
+  const voucherDiscount = appliedVouchers.reduce((sum, voucher) => sum + voucher.appliedAmount, 0)
+
+  const totalAmount = Math.max(0, subtotal - discountAmount - voucherDiscount)
+
   const change =
     paymentMethod === 'cash' && cashReceived ? parseFloat(cashReceived) - totalAmount : 0
 
@@ -715,6 +805,10 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
   }
 
   const processPayment = async () => {
+    if (isProcessing || paymentCompleted) {
+      return
+    }
+
     if (paymentMethod === 'cash') {
       const received = parseFloat(cashReceived)
       if (!received || received < totalAmount) {
@@ -722,6 +816,13 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
         setTimeout(() => setMessage({ type: '', text: '' }), 3000)
         return
       }
+    }
+
+    // NEW: Validate voucher payments
+    if (paymentMethod === 'voucher' && appliedVouchers.length === 0) {
+      setMessage({ type: 'error', text: 'Please apply a voucher to continue' })
+      setTimeout(() => setMessage({ type: '', text: '' }), 3000)
+      return
     }
 
     setIsProcessing(true)
@@ -786,12 +887,43 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
         }${booking.staff?.name ? ` - Staff: ${booking.staff.name}` : ''}`,
       }
 
-      const { error: transactionError } = await supabase
+      // Insert transaction
+      const { data: transaction, error: transactionError } = await supabase
         .from('transactions')
         .insert([transactionData])
+        .select('id')
+        .single()
+
       if (transactionError) {
         console.error('Transaction logging error:', transactionError)
         // Continue with payment even if logging fails
+      }
+
+      if (appliedVouchers.length > 0) {
+        for (const voucher of appliedVouchers) {
+          // Update voucher balance
+          const newBalance = voucher.balance - voucher.appliedAmount
+          const newStatus = newBalance <= 0 ? 'redeemed' : 'active'
+
+          await supabase
+            .from('vouchers')
+            .update({
+              balance: newBalance,
+              status: newStatus,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', voucher.id)
+
+          // Record voucher transaction
+          await supabase.from('voucher_transactions').insert({
+            voucher_id: voucher.id,
+            transaction_type: 'redemption',
+            amount: voucher.appliedAmount,
+            balance_after: newBalance,
+            notes: `Booking payment redemption - Booking #${booking.id}`,
+            created_by: booking.staffId,
+          })
+        }
       }
 
       // Log cash drawer opening
@@ -819,6 +951,7 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
         staffId: booking.staffId, // Include staff information
       })
 
+      setPaymentCompleted(true)
       setMessage({ type: 'success', text: 'Payment completed successfully!' })
 
       setTimeout(() => {
@@ -932,13 +1065,13 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
               </button>
             )}
           </div>
-
           {/* Amount Breakdown */}
           <div style={paymentModalStyles.amountBreakdown}>
             <div style={paymentModalStyles.breakdownRow}>
               <span style={paymentModalStyles.breakdownLabel}>Subtotal:</span>
               <span style={paymentModalStyles.breakdownValue}>${subtotal.toFixed(2)}</span>
             </div>
+
             {discountAmount > 0 && (
               <div style={{ ...paymentModalStyles.breakdownRow, color: '#EF4444' }}>
                 <span style={paymentModalStyles.breakdownLabel}>
@@ -951,6 +1084,16 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
                 <span style={paymentModalStyles.breakdownValue}>-${discountAmount.toFixed(2)}</span>
               </div>
             )}
+
+            {/* NEW: Show voucher discount */}
+            {voucherDiscount > 0 && (
+              <div style={{ ...paymentModalStyles.breakdownRow, color: '#10B981' }}>
+                <span style={paymentModalStyles.breakdownLabel}>Voucher Discount:</span>
+                <span style={paymentModalStyles.breakdownValue}>
+                  -${voucherDiscount.toFixed(2)}
+                </span>
+              </div>
+            )}
           </div>
 
           <div style={paymentModalStyles.totalLabel}>Total Amount</div>
@@ -960,7 +1103,13 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
         {/* Payment Method Selection */}
         <div style={paymentModalStyles.paymentMethodSection}>
           <label style={paymentModalStyles.label}>Payment Method</label>
-          <div style={paymentModalStyles.paymentMethodGrid}>
+          <div
+            style={{
+              ...paymentModalStyles.paymentMethodGrid,
+              gridTemplateColumns: 'repeat(2, 1fr)', // Change to 2x2 grid
+              gap: '12px',
+            }}
+          >
             <button
               onClick={() => setPaymentMethod('cash')}
               style={{
@@ -971,6 +1120,7 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
               <span style={paymentModalStyles.paymentIcon}>💵</span>
               <span>Cash</span>
             </button>
+
             <button
               onClick={() => setPaymentMethod('card')}
               style={{
@@ -980,6 +1130,32 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
             >
               <span style={paymentModalStyles.paymentIcon}>💳</span>
               <span>Card</span>
+            </button>
+
+            {/* NEW: PayID Payment Method */}
+            <button
+              onClick={() => setPaymentMethod('payid')}
+              style={{
+                ...paymentModalStyles.paymentMethodButton,
+                ...(paymentMethod === 'payid' ? paymentModalStyles.paymentMethodButtonActive : {}),
+              }}
+            >
+              <span style={paymentModalStyles.paymentIcon}>📱</span>
+              <span>PayID</span>
+            </button>
+
+            {/* NEW: Voucher Payment Method */}
+            <button
+              onClick={() => setPaymentMethod('voucher')}
+              style={{
+                ...paymentModalStyles.paymentMethodButton,
+                ...(paymentMethod === 'voucher'
+                  ? paymentModalStyles.paymentMethodButtonActive
+                  : {}),
+              }}
+            >
+              <span style={paymentModalStyles.paymentIcon}>🎁</span>
+              <span>Voucher</span>
             </button>
           </div>
         </div>
@@ -1011,6 +1187,138 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
           </div>
         )}
 
+        {/* Voucher Input */}
+        {paymentMethod === 'voucher' && (
+          <div style={paymentModalStyles.cashInputSection}>
+            <label style={paymentModalStyles.label}>Voucher Code</label>
+            <div
+              style={{
+                display: 'flex',
+                gap: '8px',
+                marginBottom: '12px',
+              }}
+            >
+              <input
+                type="text"
+                value={voucherCode}
+                onChange={(e) => setVoucherCode(e.target.value.toUpperCase())}
+                placeholder="ENTER VOUCHER CODE"
+                style={{
+                  ...paymentModalStyles.cashInput,
+                  textTransform: 'uppercase',
+                  flex: 1,
+                }}
+              />
+              <button
+                onClick={() => validateVoucher(voucherCode)}
+                disabled={!voucherCode.trim() || voucherLoading}
+                style={{
+                  padding: '12px 16px',
+                  backgroundColor: '#10B981',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '8px',
+                  fontSize: '14px',
+                  cursor: voucherLoading ? 'not-allowed' : 'pointer',
+                  opacity: voucherLoading || !voucherCode.trim() ? 0.5 : 1,
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {voucherLoading ? 'Checking...' : 'Validate'}
+              </button>
+            </div>
+
+            {/* Voucher Error */}
+            {voucherError && (
+              <div style={{ color: '#EF4444', fontSize: '14px', marginBottom: '12px' }}>
+                {voucherError}
+              </div>
+            )}
+
+            {/* Valid Voucher Display */}
+            {voucherData && !voucherError && (
+              <div
+                style={{
+                  marginBottom: '16px',
+                  padding: '12px',
+                  backgroundColor: '#F0FDF4',
+                  borderRadius: '8px',
+                  border: '1px solid #10B981',
+                }}
+              >
+                <div
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                >
+                  <div>
+                    <div style={{ fontWeight: '600', color: '#065F46' }}>{voucherData.code}</div>
+                    <div style={{ fontSize: '14px', color: '#047857' }}>
+                      Balance: ${voucherData.balance}| Can apply: $
+                      {Math.min(voucherData.balance, totalAmount).toFixed(2)}
+                    </div>
+                  </div>
+                  <button
+                    onClick={applyVoucher}
+                    style={{
+                      padding: '6px 12px',
+                      backgroundColor: '#10B981',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '6px',
+                      fontSize: '14px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Applied Vouchers List */}
+            {appliedVouchers.length > 0 && (
+              <div style={{ marginBottom: '16px' }}>
+                <label style={{ ...paymentModalStyles.label, marginBottom: '8px' }}>
+                  Applied Vouchers
+                </label>
+                {appliedVouchers.map((voucher) => (
+                  <div
+                    key={voucher.id}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center',
+                      padding: '8px 12px',
+                      backgroundColor: '#EFF6FF',
+                      borderRadius: '6px',
+                      marginBottom: '8px',
+                      border: '1px solid #3B82F6',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: '600', color: '#1E40AF' }}>{voucher.code}</div>
+                      <div style={{ fontSize: '12px', color: '#1D4ED8' }}>
+                        Applied: ${voucher.appliedAmount.toFixed(2)}
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => removeAppliedVoucher(voucher.id)}
+                      style={{
+                        color: '#EF4444',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        background: 'none',
+                        border: 'none',
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Message */}
         {message.text && (
           <div
@@ -1030,17 +1338,27 @@ const PaymentModal = ({ isOpen, onClose, booking, serialPort, setSerialPort }) =
           onClick={processPayment}
           disabled={
             isProcessing ||
-            (paymentMethod === 'cash' && (!cashReceived || parseFloat(cashReceived) < totalAmount))
+            paymentCompleted || // NEW: Disable if payment is completed
+            (paymentMethod === 'cash' &&
+              (!cashReceived || parseFloat(cashReceived) < totalAmount)) ||
+            (paymentMethod === 'voucher' && appliedVouchers.length === 0)
           }
           style={{
             ...paymentModalStyles.completeButton,
             ...(isProcessing ||
-            (paymentMethod === 'cash' && (!cashReceived || parseFloat(cashReceived) < totalAmount))
+            paymentCompleted || // NEW: Include in styling condition
+            (paymentMethod === 'cash' &&
+              (!cashReceived || parseFloat(cashReceived) < totalAmount)) ||
+            (paymentMethod === 'voucher' && appliedVouchers.length === 0)
               ? paymentModalStyles.completeButtonDisabled
               : {}),
           }}
         >
-          {isProcessing ? 'Processing...' : 'Complete Payment'}
+          {paymentCompleted
+            ? '✓ Payment Completed'
+            : isProcessing
+            ? 'Processing...'
+            : 'Complete Payment'}
         </button>
       </div>
     </div>
