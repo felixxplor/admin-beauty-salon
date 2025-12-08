@@ -230,21 +230,21 @@ const isTimeSlotAvailable = (
 
 // Add this function after isTimeSlotAvailable
 const getAvailableTimeSlotsForConsecutiveBookings = (
-  serviceIds,
+  selectedServices, // Now expects the full selectedServices array
   staffAssignments,
   dayBookings,
   services,
   selectedDate
 ) => {
-  if (!serviceIds || serviceIds.length === 0) return timeSlots
+  if (!selectedServices || selectedServices.length === 0) return timeSlots
 
   return timeSlots.filter((startTime) => {
     let currentTime = startTime
 
     // Check if all services can be scheduled consecutively
-    for (const serviceId of serviceIds) {
-      const service = services.find((s) => s.id.toString() === serviceId)
-      const staffId = staffAssignments[serviceId]
+    for (const serviceInstance of selectedServices) {
+      const service = serviceInstance.service
+      const staffId = staffAssignments[serviceInstance.instanceId]
 
       if (!service || !staffId) return false
 
@@ -264,7 +264,6 @@ const getAvailableTimeSlotsForConsecutiveBookings = (
     return true
   })
 }
-
 // Custom hook to get staff absences for a specific date
 const useStaffAbsences = (date) => {
   const [absences, setAbsences] = useState([])
@@ -479,14 +478,16 @@ const BookingCalendar = () => {
     clientId: '',
     name: '',
     phone: '',
-    selectedServiceIds: [],
-    startTime: '',
+    selectedServices: [],
+    startTime: '', // Keep this for single client
+    clientStartTimes: {}, // New: for multiple clients
     staffId: '',
     numClients: 1,
     notes: '',
     status: 'confirmed',
     serviceStaffAssignments: {},
     createSeparateBookings: false,
+    clientServiceAssignments: {},
   })
 
   const { bookings, isLoading, refetch } = useBookings()
@@ -608,15 +609,19 @@ const BookingCalendar = () => {
 
   // Calculate total duration and price based on selected services
   const selectedServicesInfo = useMemo(() => {
-    if (!services || createFormData.selectedServiceIds.length === 0) {
+    if (
+      !services ||
+      !createFormData.selectedServices ||
+      createFormData.selectedServices.length === 0
+    ) {
       return { totalDuration: 0, totalPrice: '0', serviceNames: [] }
     }
 
-    const selectedServices = services.filter((service) =>
-      createFormData.selectedServiceIds.includes(service.id.toString())
+    const selectedServicesData = createFormData.selectedServices.map(
+      (serviceInstance) => serviceInstance.service
     )
 
-    const totalDuration = selectedServices.reduce(
+    const totalDuration = selectedServicesData.reduce(
       (sum, service) => sum + (service.duration || 0),
       0
     )
@@ -625,7 +630,7 @@ const BookingCalendar = () => {
     let hasPlus = false
     let hasNonNumeric = false
 
-    selectedServices.forEach((service) => {
+    selectedServicesData.forEach((service) => {
       const regularPriceStr = service.regularPrice ? String(service.regularPrice) : '0'
       const discountStr = service.discount ? String(service.discount) : '0'
 
@@ -652,10 +657,62 @@ const BookingCalendar = () => {
       totalPrice = `${totalPriceNum}`
     }
 
-    const serviceNames = selectedServices.map((service) => service.name)
+    const serviceNames = selectedServicesData.map((service) => service.name)
 
-    return { totalDuration, totalPrice, serviceNames, selectedServices }
-  }, [services, createFormData.selectedServiceIds])
+    return { totalDuration, totalPrice, serviceNames, selectedServices: selectedServicesData }
+  }, [services, createFormData.selectedServices])
+
+  // Helper function to handle service assignment to clients
+  const handleClientServiceAssignment = (serviceId, clientIndex) => {
+    setCreateFormData((prev) => ({
+      ...prev,
+      clientServiceAssignments: {
+        ...prev.clientServiceAssignments,
+        [serviceId]: clientIndex,
+      },
+    }))
+  }
+
+  // Helper function to get services for a specific client
+  const getServicesForClient = (clientIndex) => {
+    return createFormData.selectedServices.filter(
+      (serviceInstance) =>
+        createFormData.clientServiceAssignments[serviceInstance.instanceId] === clientIndex
+    )
+  }
+
+  // Helper function to check if all services are assigned to clients
+  const areAllServicesAssigned = () => {
+    if (createFormData.numClients === 1) return true
+
+    return createFormData.selectedServices.every(
+      (serviceInstance) =>
+        createFormData.clientServiceAssignments[serviceInstance.instanceId] !== undefined
+    )
+  }
+
+  // Helper function to handle client start time assignment
+  const handleClientStartTimeAssignment = (clientIndex, startTime) => {
+    setCreateFormData((prev) => ({
+      ...prev,
+      clientStartTimes: {
+        ...prev.clientStartTimes,
+        [clientIndex]: startTime,
+      },
+    }))
+  }
+
+  // Helper function to check if all clients have start times
+  const areAllClientStartTimesAssigned = () => {
+    if (createFormData.numClients === 1) return !!createFormData.startTime
+
+    for (let i = 0; i < createFormData.numClients; i++) {
+      if (!createFormData.clientStartTimes[i]) {
+        return false
+      }
+    }
+    return true
+  }
 
   useEffect(() => {
     // Reset start time if it becomes unavailable when staff/services change
@@ -665,12 +722,16 @@ const BookingCalendar = () => {
       // Get the current day's bookings
       const currentDayBookings = bookingsByDate[selectedDate] || []
 
-      if (createFormData.createSeparateBookings && createFormData.selectedServiceIds.length > 1) {
+      if (
+        createFormData.createSeparateBookings &&
+        createFormData.selectedServices &&
+        createFormData.selectedServices.length > 1
+      ) {
         // Check if start time is still available for consecutive bookings
         const availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
-          createFormData.selectedServiceIds,
+          createFormData.selectedServices,
           createFormData.serviceStaffAssignments,
-          currentDayBookings, // FIX: Use currentDayBookings instead of dayBookings
+          currentDayBookings,
           services,
           selectedDate
         )
@@ -696,13 +757,13 @@ const BookingCalendar = () => {
       }
     }
   }, [
-    createFormData.startTime, // FIX: Add missing dependency
+    createFormData.startTime,
     createFormData.staffId,
     createFormData.serviceStaffAssignments,
-    createFormData.selectedServiceIds,
+    createFormData.selectedServices, // Changed from selectedServiceIds
     createFormData.createSeparateBookings,
     selectedServicesInfo.totalDuration,
-    bookingsByDate, // FIX: Use bookingsByDate instead of dayBookings
+    bookingsByDate,
     selectedDate,
     services,
   ])
@@ -1064,21 +1125,40 @@ const BookingCalendar = () => {
 
   const handleServiceSelection = (serviceId) => {
     setCreateFormData((prev) => {
-      const isSelected = prev.selectedServiceIds.includes(serviceId)
-      const newSelectedIds = isSelected
-        ? prev.selectedServiceIds.filter((id) => id !== serviceId)
-        : [...prev.selectedServiceIds, serviceId]
+      // Create a new service instance with unique ID
+      const instanceId = `${serviceId}_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
-      const newAssignments = { ...prev.serviceStaffAssignments }
-      if (isSelected) {
-        delete newAssignments[serviceId]
-      }
+      const newSelectedServices = [
+        ...prev.selectedServices,
+        {
+          instanceId,
+          serviceId: serviceId,
+          service: services.find((s) => s.id.toString() === serviceId),
+        },
+      ]
 
       return {
         ...prev,
-        selectedServiceIds: newSelectedIds,
-        serviceStaffAssignments: newAssignments,
+        selectedServices: newSelectedServices,
         createSeparateBookings: false,
+      }
+    })
+  }
+
+  const handleRemoveServiceInstance = (instanceId) => {
+    setCreateFormData((prev) => {
+      const newSelectedServices = prev.selectedServices.filter((s) => s.instanceId !== instanceId)
+      const newStaffAssignments = { ...prev.serviceStaffAssignments }
+      const newClientAssignments = { ...prev.clientServiceAssignments }
+
+      delete newStaffAssignments[instanceId]
+      delete newClientAssignments[instanceId]
+
+      return {
+        ...prev,
+        selectedServices: newSelectedServices,
+        serviceStaffAssignments: newStaffAssignments,
+        clientServiceAssignments: newClientAssignments,
       }
     })
   }
@@ -1186,12 +1266,33 @@ const BookingCalendar = () => {
     }
   }
 
+  // Add this helper function with your other helper functions
+  const areAllServicesAssignedToStaff = () => {
+    if (createFormData.numClients > 1) {
+      // For multiple clients, all services must have staff assigned
+      return createFormData.selectedServices.every(
+        (serviceInstance) => createFormData.serviceStaffAssignments[serviceInstance.instanceId]
+      )
+    } else if (
+      createFormData.createSeparateBookings &&
+      createFormData.selectedServices.length > 1
+    ) {
+      // For single client with separate bookings, all services must have staff assigned
+      return createFormData.selectedServices.every(
+        (serviceInstance) => createFormData.serviceStaffAssignments[serviceInstance.instanceId]
+      )
+    } else {
+      // For single client with combined booking, just need one staff member
+      return !!createFormData.staffId
+    }
+  }
+
   const handleCreateBooking = async (e) => {
     e.preventDefault()
     setIsCreating(true)
 
     try {
-      if (createFormData.selectedServiceIds.length === 0) {
+      if (!createFormData.selectedServices || createFormData.selectedServices.length === 0) {
         alert('Please select at least one service')
         setIsCreating(false)
         return
@@ -1203,37 +1304,147 @@ const BookingCalendar = () => {
         return
       }
 
-      if (createFormData.createSeparateBookings && createFormData.selectedServiceIds.length > 1) {
-        const unassignedServices = createFormData.selectedServiceIds.filter(
-          (serviceId) => !createFormData.serviceStaffAssignments[serviceId]
-        )
+      // Check if multi-client booking has all services assigned
+      if (createFormData.numClients > 1 && !areAllServicesAssigned()) {
+        alert('Please assign all services to clients')
+        setIsCreating(false)
+        return
+      }
 
-        if (unassignedServices.length > 0) {
-          alert('Please assign a staff member to each service')
-          setIsCreating(false)
-          return
+      // Multi-client booking logic
+      if (createFormData.numClients > 1) {
+        // Create separate bookings for each client
+        for (let clientIndex = 0; clientIndex < createFormData.numClients; clientIndex++) {
+          const clientServices = getServicesForClient(clientIndex)
+
+          if (clientServices.length === 0) continue // Skip if no services for this client
+
+          let currentStartTime = createFormData.startTime
+
+          // Create booking for each service for this client
+          for (const serviceInstance of clientServices) {
+            const service = serviceInstance.service // Direct access to service object
+            const staffId = createFormData.serviceStaffAssignments[serviceInstance.instanceId] // Use instanceId for staff assignments
+
+            const startDateTime = createLocalDateTime(selectedDate, currentStartTime)
+            const endDateTime = new Date(startDateTime.getTime() + service.duration * 60000)
+
+            const formattedStartTime = formatDateForDatabase(startDateTime)
+            const formattedEndTime = formatDateForDatabase(endDateTime)
+
+            const regularPriceStr = service.regularPrice ? String(service.regularPrice) : '0'
+            const discountStr = service.discount ? String(service.discount) : '0'
+            const hasPlus = regularPriceStr.includes('+')
+            const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
+            const discountNum = parseFloat(discountStr.replace('+', ''))
+            const priceValue = hasPlus
+              ? `${regularPriceNum - discountNum}+`
+              : `${regularPriceNum - discountNum}`
+
+            const bookingData = {
+              date: selectedDate,
+              startTime: formattedStartTime,
+              endTime: formattedEndTime,
+              numClients: 1, // Each booking is for one client
+              price: priceValue,
+              totalPrice: priceValue,
+              status: createFormData.status,
+              notes: `${createFormData.notes}${createFormData.notes ? ' | ' : ''}Client ${
+                clientIndex + 1
+              } of ${createFormData.numClients}`,
+              serviceIds: [parseInt(serviceInstance.serviceId)], // Use serviceInstance.serviceId
+              serviceId: parseInt(serviceInstance.serviceId), // Use serviceInstance.serviceId
+              isPaid: false,
+              extrasPrice: 0,
+              staffId: parseInt(staffId),
+            }
+
+            if (createFormData.clientId) {
+              bookingData.clientId = parseInt(createFormData.clientId)
+            } else {
+              bookingData.name = `${createFormData.name || 'Client'} ${clientIndex + 1}`
+              bookingData.phone = createFormData.phone
+            }
+
+            await createBooking(bookingData)
+            currentStartTime = calculateEndTime(currentStartTime, service.duration)
+          }
         }
+      } else {
+        // Single client booking (existing logic)
+        if (
+          createFormData.createSeparateBookings &&
+          createFormData.selectedServices &&
+          createFormData.selectedServices.length > 1
+        ) {
+          const unassignedServices = createFormData.selectedServices.filter(
+            (serviceInstance) => !createFormData.serviceStaffAssignments[serviceInstance.instanceId]
+          )
 
-        let currentStartTime = createFormData.startTime
+          if (unassignedServices.length > 0) {
+            alert('Please assign a staff member to each service')
+            setIsCreating(false)
+            return
+          }
 
-        for (const serviceId of createFormData.selectedServiceIds) {
-          const service = services.find((s) => s.id.toString() === serviceId)
-          const staffId = createFormData.serviceStaffAssignments[serviceId]
+          let currentStartTime = createFormData.startTime
 
-          const startDateTime = createLocalDateTime(selectedDate, currentStartTime)
-          const endDateTime = new Date(startDateTime.getTime() + service.duration * 60000)
+          for (const serviceInstance of createFormData.selectedServices) {
+            const service = serviceInstance.service // Changed: Direct access instead of find
+            const staffId = createFormData.serviceStaffAssignments[serviceInstance.instanceId] // Changed: Use instanceId
+
+            const startDateTime = createLocalDateTime(selectedDate, currentStartTime)
+            const endDateTime = new Date(startDateTime.getTime() + service.duration * 60000)
+
+            const formattedStartTime = formatDateForDatabase(startDateTime)
+            const formattedEndTime = formatDateForDatabase(endDateTime)
+
+            const regularPriceStr = service.regularPrice ? String(service.regularPrice) : '0'
+            const discountStr = service.discount ? String(service.discount) : '0'
+            const hasPlus = regularPriceStr.includes('+')
+            const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
+            const discountNum = parseFloat(discountStr.replace('+', ''))
+            const priceValue = hasPlus
+              ? `${regularPriceNum - discountNum}+`
+              : `${regularPriceNum - discountNum}`
+
+            const bookingData = {
+              date: selectedDate,
+              startTime: formattedStartTime,
+              endTime: formattedEndTime,
+              numClients: parseInt(createFormData.numClients),
+              price: priceValue,
+              totalPrice: priceValue,
+              status: createFormData.status,
+              notes: createFormData.notes,
+              serviceIds: [parseInt(serviceInstance.serviceId)], // Changed: Use serviceInstance.serviceId
+              serviceId: parseInt(serviceInstance.serviceId), // Changed: Use serviceInstance.serviceId
+              isPaid: false,
+              extrasPrice: 0,
+              staffId: parseInt(staffId),
+            }
+
+            if (createFormData.clientId) {
+              bookingData.clientId = parseInt(createFormData.clientId)
+            } else {
+              bookingData.name = createFormData.name || null
+              bookingData.phone = createFormData.phone
+            }
+
+            await createBooking(bookingData)
+            currentStartTime = calculateEndTime(currentStartTime, service.duration)
+          }
+        } else {
+          // Combined booking
+          const startDateTime = createLocalDateTime(selectedDate, createFormData.startTime)
+          const endDateTime = new Date(
+            startDateTime.getTime() + selectedServicesInfo.totalDuration * 60000
+          )
 
           const formattedStartTime = formatDateForDatabase(startDateTime)
           const formattedEndTime = formatDateForDatabase(endDateTime)
 
-          const regularPriceStr = service.regularPrice ? String(service.regularPrice) : '0'
-          const discountStr = service.discount ? String(service.discount) : '0'
-          const hasPlus = regularPriceStr.includes('+')
-          const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
-          const discountNum = parseFloat(discountStr.replace('+', ''))
-          const priceValue = hasPlus
-            ? `${regularPriceNum - discountNum}+`
-            : `${regularPriceNum - discountNum}`
+          const priceValue = selectedServicesInfo.totalPrice
 
           const bookingData = {
             date: selectedDate,
@@ -1244,11 +1455,16 @@ const BookingCalendar = () => {
             totalPrice: priceValue,
             status: createFormData.status,
             notes: createFormData.notes,
-            serviceIds: [parseInt(serviceId)],
-            serviceId: parseInt(serviceId),
+            serviceIds: createFormData.selectedServices.map((instance) =>
+              parseInt(instance.serviceId)
+            ),
+            serviceId:
+              createFormData.selectedServices.length === 1
+                ? parseInt(createFormData.selectedServices[0].serviceId)
+                : null,
             isPaid: false,
             extrasPrice: 0,
-            staffId: parseInt(staffId),
+            staffId: createFormData.staffId ? parseInt(createFormData.staffId) : null,
           }
 
           if (createFormData.clientId) {
@@ -1259,47 +1475,7 @@ const BookingCalendar = () => {
           }
 
           await createBooking(bookingData)
-
-          currentStartTime = calculateEndTime(currentStartTime, service.duration)
         }
-      } else {
-        const startDateTime = createLocalDateTime(selectedDate, createFormData.startTime)
-        const endDateTime = new Date(
-          startDateTime.getTime() + selectedServicesInfo.totalDuration * 60000
-        )
-
-        const formattedStartTime = formatDateForDatabase(startDateTime)
-        const formattedEndTime = formatDateForDatabase(endDateTime)
-
-        const priceValue = selectedServicesInfo.totalPrice
-
-        const bookingData = {
-          date: selectedDate,
-          startTime: formattedStartTime,
-          endTime: formattedEndTime,
-          numClients: parseInt(createFormData.numClients),
-          price: priceValue,
-          totalPrice: priceValue,
-          status: createFormData.status,
-          notes: createFormData.notes,
-          serviceIds: createFormData.selectedServiceIds.map((id) => parseInt(id)),
-          serviceId:
-            createFormData.selectedServiceIds.length === 1
-              ? parseInt(createFormData.selectedServiceIds[0])
-              : null,
-          isPaid: false,
-          extrasPrice: 0,
-          staffId: createFormData.staffId ? parseInt(createFormData.staffId) : null,
-        }
-
-        if (createFormData.clientId) {
-          bookingData.clientId = parseInt(createFormData.clientId)
-        } else {
-          bookingData.name = createFormData.name || null
-          bookingData.phone = createFormData.phone
-        }
-
-        await createBooking(bookingData)
       }
 
       closeModal()
@@ -1307,7 +1483,7 @@ const BookingCalendar = () => {
         clientId: '',
         name: '',
         phone: '',
-        selectedServiceIds: [],
+        selectedServices: [], // Changed from selectedServiceIds
         startTime: '',
         staffId: '',
         numClients: 1,
@@ -1315,6 +1491,7 @@ const BookingCalendar = () => {
         status: 'confirmed',
         serviceStaffAssignments: {},
         createSeparateBookings: false,
+        clientServiceAssignments: {},
       })
 
       setSearchParams({ date: selectedDate, view: 'day' })
@@ -2189,6 +2366,24 @@ const BookingCalendar = () => {
                   </div>
                 </div>
 
+                <div style={calendarStyles.formGroup}>
+                  <label style={calendarStyles.label}>Number of Clients *</label>
+                  <select
+                    style={calendarStyles.select}
+                    value={createFormData.numClients}
+                    onChange={(e) =>
+                      setCreateFormData((prev) => ({ ...prev, numClients: e.target.value }))
+                    }
+                    required
+                  >
+                    <option value="1">1 Client</option>
+                    <option value="2">2 Clients</option>
+                    <option value="3">3 Clients</option>
+                    <option value="4">4 Clients</option>
+                    <option value="5">5 Clients</option>
+                  </select>
+                </div>
+
                 <div
                   style={{
                     fontSize: '12px',
@@ -2205,7 +2400,7 @@ const BookingCalendar = () => {
 
                 {/* Services with Search Box */}
                 <div style={calendarStyles.formGroup}>
-                  <label style={calendarStyles.label}>Services (Select Multiple)</label>
+                  <label style={calendarStyles.label}>Services (Click to Add Multiple)</label>
 
                   <input
                     type="text"
@@ -2234,7 +2429,7 @@ const BookingCalendar = () => {
                   >
                     {filteredServices.length > 0 ? (
                       filteredServices.map((service) => (
-                        <label
+                        <div
                           key={service.id}
                           style={{
                             display: 'flex',
@@ -2243,21 +2438,26 @@ const BookingCalendar = () => {
                             cursor: 'pointer',
                             borderRadius: '4px',
                             marginBottom: '4px',
-                            backgroundColor: createFormData.selectedServiceIds.includes(
-                              service.id.toString()
-                            )
-                              ? '#e0f2fe'
-                              : 'transparent',
+                            backgroundColor: 'transparent',
+                            border: '1px solid #e5e7eb',
                           }}
+                          onClick={() => handleServiceSelection(service.id.toString())}
                         >
-                          <input
-                            type="checkbox"
-                            checked={createFormData.selectedServiceIds.includes(
-                              service.id.toString()
-                            )}
-                            onChange={() => handleServiceSelection(service.id.toString())}
-                            style={{ marginRight: '8px' }}
-                          />
+                          <button
+                            type="button"
+                            style={{
+                              marginRight: '8px',
+                              padding: '4px 8px',
+                              fontSize: '12px',
+                              backgroundColor: '#2563eb',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '4px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            + Add
+                          </button>
                           <div style={{ flex: 1 }}>
                             <div style={{ fontWeight: '500', fontSize: '14px', color: '#000' }}>
                               {service.name}
@@ -2276,42 +2476,10 @@ const BookingCalendar = () => {
                                   {service.category}
                                 </span>
                               )}
-                              {service.duration} min - $
-                              {(() => {
-                                const regularPriceStr = service.regularPrice
-                                  ? String(service.regularPrice)
-                                  : '0'
-                                const discountStr = service.discount
-                                  ? String(service.discount)
-                                  : '0'
-
-                                const hasPlus = regularPriceStr.includes('+')
-                                const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
-                                const discountNum = parseFloat(discountStr.replace('+', ''))
-
-                                if (isNaN(regularPriceNum)) {
-                                  return regularPriceStr
-                                }
-
-                                const finalPrice =
-                                  regularPriceNum - (isNaN(discountNum) ? 0 : discountNum)
-
-                                return hasPlus ? `${finalPrice}+` : `${finalPrice}`
-                              })()}
-                              {service.discount > 0 && (
-                                <span
-                                  style={{
-                                    textDecoration: 'line-through',
-                                    marginLeft: '4px',
-                                    opacity: 0.7,
-                                  }}
-                                >
-                                  ${service.regularPrice}
-                                </span>
-                              )}
+                              {service.duration} min - ${service.regularPrice}
                             </div>
                           </div>
-                        </label>
+                        </div>
                       ))
                     ) : (
                       <div
@@ -2322,51 +2490,153 @@ const BookingCalendar = () => {
                           fontSize: '14px',
                         }}
                       >
-                        No services found matching &#39;{serviceSearchTerm}&#39;
+                        No services found matching '{serviceSearchTerm}'
                       </div>
                     )}
                   </div>
 
-                  {serviceSearchTerm && (
-                    <button
-                      type="button"
-                      onClick={() => setServiceSearchTerm('')}
-                      style={{
-                        marginTop: '8px',
-                        padding: '6px 12px',
-                        fontSize: '12px',
-                        color: '#2563eb',
-                        backgroundColor: 'transparent',
-                        border: 'none',
-                        cursor: 'pointer',
-                        textDecoration: 'underline',
-                      }}
-                    >
-                      Clear search
-                    </button>
-                  )}
-
-                  {selectedServicesInfo.totalDuration > 0 && (
+                  {/* Selected Services Display */}
+                  {createFormData.selectedServices.length > 0 && (
                     <div
                       style={{
-                        marginTop: '8px',
-                        padding: '8px',
-                        backgroundColor: '#f0f9ff',
-                        borderRadius: '4px',
-                        fontSize: '12px',
+                        marginTop: '12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        padding: '12px',
+                        backgroundColor: '#f8fafc',
                       }}
                     >
-                      <strong>Selected:</strong> {selectedServicesInfo.serviceNames.join(', ')}
-                      <br />
-                      <strong>Total Duration:</strong> {selectedServicesInfo.totalDuration} minutes
-                      <br />
-                      <strong>Total Price:</strong> ${selectedServicesInfo.totalPrice}
+                      <div style={{ fontWeight: '600', marginBottom: '8px', fontSize: '14px' }}>
+                        Selected Services ({createFormData.selectedServices.length}):
+                      </div>
+                      {createFormData.selectedServices.map((serviceInstance, index) => (
+                        <div
+                          key={serviceInstance.instanceId}
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            padding: '6px 0',
+                            borderBottom:
+                              index < createFormData.selectedServices.length - 1
+                                ? '1px solid #e5e7eb'
+                                : 'none',
+                          }}
+                        >
+                          <span style={{ fontSize: '13px' }}>
+                            {serviceInstance.service.name} ({serviceInstance.service.duration} min)
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveServiceInstance(serviceInstance.instanceId)}
+                            style={{
+                              color: '#dc2626',
+                              backgroundColor: 'transparent',
+                              border: 'none',
+                              cursor: 'pointer',
+                              fontSize: '12px',
+                              padding: '2px 6px',
+                            }}
+                          >
+                            ✕ Remove
+                          </button>
+                        </div>
+                      ))}
                     </div>
                   )}
                 </div>
 
+                {/* Client-Service Assignment for Multiple Clients */}
+                {createFormData.numClients > 1 && createFormData.selectedServices.length > 0 && (
+                  <div style={calendarStyles.formGroup}>
+                    <label style={calendarStyles.label}>Assign Services to Clients *</label>
+                    <div
+                      style={{
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        padding: '12px',
+                        backgroundColor: 'white',
+                      }}
+                    >
+                      {createFormData.selectedServices.map((serviceInstance, index) => (
+                        <div
+                          key={serviceInstance.instanceId}
+                          style={{
+                            marginBottom:
+                              index < createFormData.selectedServices.length - 1 ? '12px' : '0',
+                            paddingBottom:
+                              index < createFormData.selectedServices.length - 1 ? '12px' : '0',
+                            borderBottom:
+                              index < createFormData.selectedServices.length - 1
+                                ? '1px solid #e5e7eb'
+                                : 'none',
+                          }}
+                        >
+                          <div
+                            style={{
+                              fontSize: '13px',
+                              fontWeight: '600',
+                              marginBottom: '6px',
+                              color: '#374151',
+                            }}
+                          >
+                            {serviceInstance.service.name} ({serviceInstance.service.duration} min)
+                            <span style={{ fontSize: '11px', color: '#666', marginLeft: '8px' }}>
+                              Instance #{index + 1}
+                            </span>
+                          </div>
+                          <select
+                            style={calendarStyles.select}
+                            value={
+                              createFormData.clientServiceAssignments[
+                                serviceInstance.instanceId
+                              ]?.toString() || ''
+                            }
+                            onChange={(e) =>
+                              handleClientServiceAssignment(
+                                serviceInstance.instanceId,
+                                parseInt(e.target.value)
+                              )
+                            }
+                            required
+                          >
+                            <option value="">Assign to client...</option>
+                            {Array.from({ length: createFormData.numClients }, (_, i) => (
+                              <option key={i} value={i.toString()}>
+                                Client {i + 1}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ))}
+
+                      {/* Assignment Summary */}
+                      <div style={{ marginTop: '12px', fontSize: '12px', color: '#666' }}>
+                        <strong>Assignment Summary:</strong>
+                        {Array.from({ length: createFormData.numClients }, (_, i) => {
+                          const clientServices = createFormData.selectedServices.filter(
+                            (serviceInstance) =>
+                              createFormData.clientServiceAssignments[
+                                serviceInstance.instanceId
+                              ] === i
+                          )
+
+                          return (
+                            <div key={i} style={{ marginTop: '4px' }}>
+                              Client {i + 1}:{' '}
+                              {clientServices.length > 0
+                                ? clientServices.map((s) => s.service.name).join(', ')
+                                : 'No services assigned'}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Multiple Bookings Toggle */}
-                {createFormData.selectedServiceIds.length > 1 && (
+                {createFormData.selectedServices && createFormData.selectedServices.length > 1 && (
                   <div
                     style={{
                       ...calendarStyles.formGroup,
@@ -2414,9 +2684,89 @@ const BookingCalendar = () => {
                   </div>
                 )}
 
-                {/* Staff Assignment Section */}
-                {createFormData.createSeparateBookings &&
-                createFormData.selectedServiceIds.length > 1 ? (
+                {/* Staff Assignment Section - Updated for Multi-Client */}
+                {createFormData.numClients > 1 ? (
+                  // Show individual service-staff assignments for multiple clients
+                  createFormData.selectedServices &&
+                  createFormData.selectedServices.length > 0 && (
+                    <div style={calendarStyles.formGroup}>
+                      <label style={calendarStyles.label}>Assign Staff to Each Service *</label>
+                      <div
+                        style={{
+                          border: '1px solid #d1d5db',
+                          borderRadius: '6px',
+                          padding: '12px',
+                          backgroundColor: 'white',
+                        }}
+                      >
+                        {createFormData.selectedServices.map((serviceInstance, index) => {
+                          const service = serviceInstance.service
+                          if (!service) return null
+
+                          return (
+                            <div
+                              key={serviceInstance.instanceId}
+                              style={{
+                                marginBottom:
+                                  index < createFormData.selectedServices.length - 1 ? '12px' : '0',
+                                paddingBottom:
+                                  index < createFormData.selectedServices.length - 1 ? '12px' : '0',
+                                borderBottom:
+                                  index < createFormData.selectedServices.length - 1
+                                    ? '1px solid #e5e7eb'
+                                    : 'none',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontSize: '13px',
+                                  fontWeight: '600',
+                                  marginBottom: '6px',
+                                  color: '#374151',
+                                }}
+                              >
+                                {service.name} ({service.duration} min)
+                                <span
+                                  style={{ fontSize: '11px', color: '#666', marginLeft: '8px' }}
+                                >
+                                  Instance #{index + 1}
+                                </span>
+                              </div>
+                              <select
+                                style={calendarStyles.select}
+                                value={
+                                  createFormData.serviceStaffAssignments[
+                                    serviceInstance.instanceId
+                                  ] || ''
+                                }
+                                onChange={(e) =>
+                                  handleServiceStaffAssignment(
+                                    serviceInstance.instanceId,
+                                    e.target.value
+                                  )
+                                }
+                                required
+                              >
+                                <option value="">Select staff member</option>
+                                {workingStaff.map((staffMember) => (
+                                  <option key={staffMember.id} value={staffMember.id}>
+                                    {staffMember.name || staffMember.id}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )
+                        })}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
+                        💡 Each service must have a staff member assigned for multiple clients
+                      </div>
+                    </div>
+                  )
+                ) : // Show single staff selection for single client (existing logic)
+                createFormData.createSeparateBookings &&
+                  createFormData.selectedServices &&
+                  createFormData.selectedServices.length > 1 ? (
                   <div style={calendarStyles.formGroup}>
                     <label style={calendarStyles.label}>Assign Staff to Each Service *</label>
                     <div
@@ -2427,20 +2777,20 @@ const BookingCalendar = () => {
                         backgroundColor: 'white',
                       }}
                     >
-                      {createFormData.selectedServiceIds.map((serviceId, index) => {
-                        const service = services.find((s) => s.id.toString() === serviceId)
+                      {createFormData.selectedServices.map((serviceInstance, index) => {
+                        const service = serviceInstance.service
                         if (!service) return null
 
                         return (
                           <div
-                            key={serviceId}
+                            key={serviceInstance.instanceId}
                             style={{
                               marginBottom:
-                                index < createFormData.selectedServiceIds.length - 1 ? '12px' : '0',
+                                index < createFormData.selectedServices.length - 1 ? '12px' : '0',
                               paddingBottom:
-                                index < createFormData.selectedServiceIds.length - 1 ? '12px' : '0',
+                                index < createFormData.selectedServices.length - 1 ? '12px' : '0',
                               borderBottom:
-                                index < createFormData.selectedServiceIds.length - 1
+                                index < createFormData.selectedServices.length - 1
                                   ? '1px solid #e5e7eb'
                                   : 'none',
                             }}
@@ -2454,12 +2804,22 @@ const BookingCalendar = () => {
                               }}
                             >
                               {service.name} ({service.duration} min)
+                              <span style={{ fontSize: '11px', color: '#666', marginLeft: '8px' }}>
+                                Instance #{index + 1}
+                              </span>
                             </div>
                             <select
                               style={calendarStyles.select}
-                              value={createFormData.serviceStaffAssignments[serviceId] || ''}
+                              value={
+                                createFormData.serviceStaffAssignments[
+                                  serviceInstance.instanceId
+                                ] || ''
+                              }
                               onChange={(e) =>
-                                handleServiceStaffAssignment(serviceId, e.target.value)
+                                handleServiceStaffAssignment(
+                                  serviceInstance.instanceId,
+                                  e.target.value
+                                )
                               }
                               required
                             >
@@ -2506,10 +2866,219 @@ const BookingCalendar = () => {
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div style={calendarStyles.formGroup}>
                     <label style={calendarStyles.label}>
-                      {createFormData.createSeparateBookings &&
-                      createFormData.selectedServiceIds.length > 1
-                        ? 'Start Time (for first service)'
-                        : 'Start Time'}
+                      {/* Start Time Section - Updated for Multi-Client */}
+                      {createFormData.numClients > 1 ? (
+                        // Multiple clients - individual start times
+                        <div style={calendarStyles.formGroup}>
+                          <label style={calendarStyles.label}>Start Times for Each Client *</label>
+                          <div
+                            style={{
+                              border: '1px solid #d1d5db',
+                              borderRadius: '6px',
+                              padding: '12px',
+                              backgroundColor: 'white',
+                            }}
+                          >
+                            {Array.from({ length: createFormData.numClients }, (_, clientIndex) => {
+                              const clientServices = getServicesForClient(clientIndex)
+                              const allServicesHaveStaff = clientServices.every(
+                                (serviceInstance) =>
+                                  createFormData.serviceStaffAssignments[serviceInstance.instanceId]
+                              )
+
+                              let availableSlots = []
+                              if (allServicesHaveStaff && clientServices.length > 0) {
+                                const currentDayBookings = bookingsByDate[selectedDate] || []
+                                availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
+                                  clientServices,
+                                  createFormData.serviceStaffAssignments,
+                                  currentDayBookings,
+                                  services,
+                                  selectedDate
+                                )
+                              }
+
+                              return (
+                                <div
+                                  key={clientIndex}
+                                  style={{
+                                    marginBottom:
+                                      clientIndex < createFormData.numClients - 1 ? '16px' : '0',
+                                    paddingBottom:
+                                      clientIndex < createFormData.numClients - 1 ? '16px' : '0',
+                                    borderBottom:
+                                      clientIndex < createFormData.numClients - 1
+                                        ? '1px solid #e5e7eb'
+                                        : 'none',
+                                  }}
+                                >
+                                  <div
+                                    style={{
+                                      fontSize: '14px',
+                                      fontWeight: '600',
+                                      marginBottom: '8px',
+                                      color: '#374151',
+                                    }}
+                                  >
+                                    Client {clientIndex + 1} Start Time
+                                    {clientServices.length > 0 && (
+                                      <span
+                                        style={{
+                                          fontSize: '12px',
+                                          fontWeight: '400',
+                                          color: '#666',
+                                          marginLeft: '8px',
+                                        }}
+                                      >
+                                        ({clientServices.map((s) => s.service.name).join(', ')})
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  <select
+                                    style={calendarStyles.select}
+                                    value={createFormData.clientStartTimes[clientIndex] || ''}
+                                    onChange={(e) =>
+                                      handleClientStartTimeAssignment(clientIndex, e.target.value)
+                                    }
+                                    required
+                                    disabled={!allServicesHaveStaff || clientServices.length === 0}
+                                  >
+                                    <option value="">Select start time</option>
+                                    {availableSlots.map((time) => (
+                                      <option key={time} value={time}>
+                                        {time}
+                                      </option>
+                                    ))}
+                                  </select>
+
+                                  {/* Status message for each client */}
+                                  <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                                    {clientServices.length === 0 ? (
+                                      <span style={{ color: '#dc2626' }}>
+                                        ⚠️ No services assigned to this client
+                                      </span>
+                                    ) : !allServicesHaveStaff ? (
+                                      <span style={{ color: '#dc2626' }}>
+                                        ⚠️ Assign staff to all services first
+                                      </span>
+                                    ) : availableSlots.length === 0 ? (
+                                      <span style={{ color: '#dc2626' }}>
+                                        ⚠️ No available time slots
+                                      </span>
+                                    ) : (
+                                      <span style={{ color: '#059669' }}>
+                                        ✓ {availableSlots.length} time slot
+                                        {availableSlots.length !== 1 ? 's' : ''} available
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Show estimated end time */}
+                                  {createFormData.clientStartTimes[clientIndex] &&
+                                    clientServices.length > 0 && (
+                                      <div
+                                        style={{
+                                          fontSize: '11px',
+                                          color: '#666',
+                                          marginTop: '4px',
+                                        }}
+                                      >
+                                        Estimated end time:{' '}
+                                        {(() => {
+                                          const totalDuration = clientServices.reduce(
+                                            (sum, serviceInstance) =>
+                                              sum + serviceInstance.service.duration,
+                                            0
+                                          )
+                                          return calculateEndTime(
+                                            createFormData.clientStartTimes[clientIndex],
+                                            totalDuration
+                                          )
+                                        })()}
+                                      </div>
+                                    )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      ) : (
+                        // Single client - existing logic
+                        <div
+                          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}
+                        >
+                          <div style={calendarStyles.formGroup}>
+                            <label style={calendarStyles.label}>
+                              {createFormData.createSeparateBookings &&
+                              createFormData.selectedServices &&
+                              createFormData.selectedServices.length > 1
+                                ? 'Start Time (for first service)'
+                                : 'Start Time'}
+                            </label>
+                            <select
+                              style={calendarStyles.select}
+                              value={createFormData.startTime}
+                              onChange={(e) =>
+                                setCreateFormData((prev) => ({
+                                  ...prev,
+                                  startTime: e.target.value,
+                                }))
+                              }
+                              required
+                            >
+                              <option value="">Select time</option>
+                              {(() => {
+                                let availableSlots = []
+                                const currentDayBookings = bookingsByDate[selectedDate] || []
+
+                                if (
+                                  createFormData.createSeparateBookings &&
+                                  createFormData.selectedServices &&
+                                  createFormData.selectedServices.length > 1
+                                ) {
+                                  availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
+                                    createFormData.selectedServices,
+                                    createFormData.serviceStaffAssignments,
+                                    currentDayBookings,
+                                    services,
+                                    selectedDate
+                                  )
+                                } else {
+                                  availableSlots = timeSlots.filter((timeSlot) => {
+                                    return isTimeSlotAvailable(
+                                      timeSlot,
+                                      createFormData.staffId,
+                                      currentDayBookings,
+                                      selectedDate,
+                                      selectedServicesInfo.totalDuration
+                                    )
+                                  })
+                                }
+
+                                return availableSlots.map((time) => (
+                                  <option key={time} value={time}>
+                                    {time}
+                                  </option>
+                                ))
+                              })()}
+                            </select>
+                          </div>
+
+                          <div style={calendarStyles.formGroup}>
+                            <label style={calendarStyles.label}>End Time (Auto-calculated)</label>
+                            <input
+                              type="text"
+                              style={{ ...calendarStyles.input, backgroundColor: '#f9fafb' }}
+                              value={calculateEndTime(
+                                createFormData.startTime,
+                                selectedServicesInfo.totalDuration
+                              )}
+                              disabled
+                            />
+                          </div>
+                        </div>
+                      )}
                     </label>
                     <select
                       style={calendarStyles.select}
@@ -2526,13 +3095,14 @@ const BookingCalendar = () => {
 
                         if (
                           createFormData.createSeparateBookings &&
-                          createFormData.selectedServiceIds.length > 1
+                          createFormData.selectedServices &&
+                          createFormData.selectedServices.length > 1
                         ) {
                           // For separate bookings - check consecutive availability
                           availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
-                            createFormData.selectedServiceIds,
+                            createFormData.selectedServices,
                             createFormData.serviceStaffAssignments,
-                            currentDayBookings, // FIX: Use currentDayBookings
+                            currentDayBookings,
                             services,
                             selectedDate
                           )
@@ -2564,12 +3134,13 @@ const BookingCalendar = () => {
 
                       if (
                         createFormData.createSeparateBookings &&
-                        createFormData.selectedServiceIds.length > 1
+                        createFormData.selectedServices &&
+                        createFormData.selectedServices.length > 1
                       ) {
                         availableCount = getAvailableTimeSlotsForConsecutiveBookings(
-                          createFormData.selectedServiceIds,
+                          createFormData.selectedServices,
                           createFormData.serviceStaffAssignments,
-                          currentDayBookings, // FIX: Use currentDayBookings
+                          currentDayBookings,
                           services,
                           selectedDate
                         ).length
@@ -2639,20 +3210,6 @@ const BookingCalendar = () => {
 
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                   <div style={calendarStyles.formGroup}>
-                    <label style={calendarStyles.label}>Number of Clients</label>
-                    <input
-                      type="number"
-                      min="1"
-                      style={calendarStyles.input}
-                      value={createFormData.numClients}
-                      onChange={(e) =>
-                        setCreateFormData((prev) => ({ ...prev, numClients: e.target.value }))
-                      }
-                      required
-                    />
-                  </div>
-
-                  <div style={calendarStyles.formGroup}>
                     <label style={calendarStyles.label}>Total Price (Auto-calculated)</label>
                     <input
                       type="text"
@@ -2691,15 +3248,24 @@ const BookingCalendar = () => {
                 </div>
 
                 <div style={calendarStyles.formButtons}>
-                  <button type="button" onClick={closeModal} style={calendarStyles.cancelButton}>
-                    Cancel
-                  </button>
                   <button
                     type="submit"
-                    disabled={isCreating || createFormData.selectedServiceIds.length === 0}
+                    disabled={
+                      isCreating ||
+                      !createFormData.selectedServices ||
+                      createFormData.selectedServices.length === 0 ||
+                      !areAllServicesAssignedToStaff() ||
+                      !areAllClientStartTimesAssigned() || // Add this validation
+                      (createFormData.numClients > 1 && !areAllServicesAssigned())
+                    }
                     style={{
                       ...calendarStyles.submitButton,
-                      ...(isCreating || createFormData.selectedServiceIds.length === 0
+                      ...(isCreating ||
+                      !createFormData.selectedServices ||
+                      createFormData.selectedServices.length === 0 ||
+                      !areAllServicesAssignedToStaff() ||
+                      !areAllClientStartTimesAssigned() ||
+                      (createFormData.numClients > 1 && !areAllServicesAssigned())
                         ? calendarStyles.disabledButton
                         : {}),
                     }}

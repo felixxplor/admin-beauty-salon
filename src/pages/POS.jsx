@@ -14,6 +14,7 @@ import {
   DoorOpen,
   User,
   Phone,
+  Gift,
 } from 'lucide-react'
 import { useServices } from '../features/services/useServices'
 import Spinner from '../ui/Spinner'
@@ -37,6 +38,11 @@ const POSSystem = () => {
   const [selectedStaff, setSelectedStaff] = useState(null)
   const [staffList, setStaffList] = useState([])
   const [staffLoading, setStaffLoading] = useState(true)
+  const [voucherCode, setVoucherCode] = useState('')
+  const [voucherData, setVoucherData] = useState(null)
+  const [voucherLoading, setVoucherLoading] = useState(false)
+  const [voucherError, setVoucherError] = useState('')
+  const [appliedVouchers, setAppliedVouchers] = useState([])
 
   // Fetch staff list on component mount
   useEffect(() => {
@@ -79,6 +85,69 @@ const POSSystem = () => {
 
     return matchesSearch && matchesCategory
   })
+
+  const validateVoucher = async (code) => {
+    setVoucherLoading(true)
+    setVoucherError('')
+
+    try {
+      const { data, error } = await supabase
+        .from('vouchers')
+        .select('*')
+        .eq('code', code.toUpperCase().trim())
+        .eq('status', 'active')
+        .single()
+
+      if (error || !data) {
+        throw new Error('Invalid voucher code')
+      }
+
+      // Check if voucher is expired
+      const now = new Date()
+      const expiryDate = new Date(data.expiry_date)
+
+      if (expiryDate < now) {
+        throw new Error('This voucher has expired')
+      }
+
+      // Check if voucher has remaining balance
+      if (data.balance <= 0) {
+        throw new Error('This voucher has been fully redeemed')
+      }
+
+      // Check if voucher is already applied
+      if (appliedVouchers.find((v) => v.code === code.toUpperCase().trim())) {
+        throw new Error('This voucher is already applied')
+      }
+
+      setVoucherData(data)
+      return data
+    } catch (error) {
+      setVoucherError(error.message)
+      return null
+    } finally {
+      setVoucherLoading(false)
+    }
+  }
+
+  const applyVoucher = () => {
+    if (voucherData) {
+      const discountAmount = Math.min(voucherData.balance, total)
+      setAppliedVouchers([
+        ...appliedVouchers,
+        {
+          ...voucherData,
+          appliedAmount: discountAmount,
+        },
+      ])
+      setVoucherCode('')
+      setVoucherData(null)
+    }
+  }
+
+  const removeAppliedVoucher = (voucherId) => {
+    setAppliedVouchers(appliedVouchers.filter((v) => v.id !== voucherId))
+  }
 
   const addToCart = (service) => {
     const existingItem = cart.find((item) => item.id === service.id)
@@ -139,7 +208,10 @@ const POSSystem = () => {
     discountAmount = cartDiscountValue
   }
 
-  const total = Math.max(0, subtotal - discountAmount) // Ensure total is not negative
+  // Calculate voucher discount
+  const voucherDiscount = appliedVouchers.reduce((sum, voucher) => sum + voucher.appliedAmount, 0)
+
+  const total = Math.max(0, subtotal - discountAmount - voucherDiscount) // Ensure total is not negative
 
   const openCashDrawer = async () => {
     try {
@@ -242,11 +314,43 @@ const POSSystem = () => {
       staff: selectedStaff,
     }
 
-    const { error } = await supabase.from('transactions').insert([transactionData])
+    const { data: transaction, error } = await supabase
+      .from('transactions')
+      .insert([transactionData])
+      .select('id')
+      .single()
 
     if (error) {
       console.error('Transaction logging error:', error)
       throw new Error('Failed to log transaction')
+    }
+
+    // If vouchers were used, record voucher redemptions
+    if (appliedVouchers.length > 0) {
+      for (const voucher of appliedVouchers) {
+        // Update voucher balance
+        const newBalance = voucher.balance - voucher.appliedAmount
+        const newStatus = newBalance <= 0 ? 'redeemed' : 'active'
+
+        await supabase
+          .from('vouchers')
+          .update({
+            balance: newBalance,
+            status: newStatus,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', voucher.id)
+
+        // Record voucher transaction
+        await supabase.from('voucher_transactions').insert({
+          voucher_id: voucher.id,
+          transaction_type: 'redemption',
+          amount: voucher.appliedAmount,
+          balance_after: newBalance,
+          notes: `POS redemption - Transaction #${transaction.id}`,
+          created_by: selectedStaff,
+        })
+      }
     }
 
     if (paymentMethod === 'cash') {
@@ -282,9 +386,14 @@ const POSSystem = () => {
       }
     }
 
+    if (paymentMethod === 'voucher' && appliedVouchers.length === 0) {
+      setMessage({ type: 'error', text: 'Please apply a voucher to continue' })
+      return
+    }
+
     setIsProcessing(true)
     setMessage({ type: '', text: '' })
-    setShowPayment(false) // Close modal immediately
+    setShowPayment(false)
 
     try {
       await logTransaction()
@@ -307,6 +416,10 @@ const POSSystem = () => {
         setCartDiscount('')
         setDiscountType('amount')
         setSelectedStaff(null)
+        setAppliedVouchers([]) // Clear applied vouchers
+        setVoucherCode('')
+        setVoucherData(null)
+        setVoucherError('')
         setMessage({ type: '', text: '' })
       }, 2000)
     } catch (error) {
@@ -551,7 +664,9 @@ const POSSystem = () => {
                 width: '100%',
                 padding: '8px 10px',
                 fontSize: '13px',
-                border: !selectedStaff ? '2px solid #EF4444' : '1px solid #D1D5DB',
+                borderWidth: !selectedStaff ? '2px' : '1px',
+                borderStyle: 'solid',
+                borderColor: !selectedStaff ? '#EF4444' : '#D1D5DB',
                 borderRadius: '6px',
                 backgroundColor: '#fff',
                 cursor: 'pointer',
@@ -937,6 +1052,17 @@ const POSSystem = () => {
                   <Phone style={{ margin: '0 auto 8px' }} size={32} />
                   <p style={styles.paymentMethodLabel}>PayID</p>
                 </button>
+                {/* NEW: Add voucher payment method */}
+                <button
+                  onClick={() => setPaymentMethod('voucher')}
+                  style={{
+                    ...styles.paymentMethodButton,
+                    ...(paymentMethod === 'voucher' ? styles.paymentMethodButtonActive : {}),
+                  }}
+                >
+                  <Gift style={{ margin: '0 auto 8px' }} size={32} />
+                  <p style={styles.paymentMethodLabel}>Voucher</p>
+                </button>
               </div>
             </div>
 
@@ -959,6 +1085,139 @@ const POSSystem = () => {
                   <div style={styles.changeDisplay}>
                     <p style={styles.changeLabel}>Change</p>
                     <p style={styles.changeAmount}>${change.toFixed(2)}</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Voucher Input */}
+            {paymentMethod === 'voucher' && (
+              <div style={styles.cashInputSection}>
+                <label style={styles.label}>Voucher Code</label>
+                <div style={styles.cashInputWrapper}>
+                  <Gift style={styles.dollarIcon} size={20} />
+                  <input
+                    type="text"
+                    value={voucherCode}
+                    onChange={(e) => setVoucherCode(e.target.value.toUpperCase())}
+                    placeholder="ENTER VOUCHER CODE"
+                    style={{
+                      ...styles.cashInput,
+                      textTransform: 'uppercase',
+                      // Remove any conflicting border properties and use separate ones:
+                      borderWidth: '1px',
+                      borderStyle: 'solid',
+                      borderColor: '#D1D5DB',
+                      // Don't use: border: '1px solid #D1D5DB' when borderColor might be set elsewhere
+                    }}
+                  />
+                  <button
+                    onClick={() => validateVoucher(voucherCode)}
+                    disabled={!voucherCode.trim() || voucherLoading}
+                    style={{
+                      marginLeft: '8px',
+                      padding: '8px 16px',
+                      backgroundColor: '#10B981',
+                      color: 'white',
+                      borderRadius: '6px',
+                      borderWidth: '0', // Use separate border properties
+                      borderStyle: 'none',
+                      fontSize: '14px',
+                      cursor: voucherLoading ? 'not-allowed' : 'pointer',
+                      opacity: voucherLoading || !voucherCode.trim() ? 0.5 : 1,
+                    }}
+                  >
+                    {voucherLoading ? 'Checking...' : 'Validate'}
+                  </button>
+                </div>
+
+                {/* Voucher Error */}
+                {voucherError && (
+                  <div style={{ color: '#EF4444', fontSize: '14px', marginTop: '8px' }}>
+                    {voucherError}
+                  </div>
+                )}
+
+                {/* Valid Voucher Display */}
+                {voucherData && !voucherError && (
+                  <div
+                    style={{
+                      marginTop: '12px',
+                      padding: '12px',
+                      backgroundColor: '#F0FDF4',
+                      borderRadius: '8px',
+                      border: '1px solid #10B981',
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: '600', color: '#065F46' }}>
+                          {voucherData.code}
+                        </div>
+                        <div style={{ fontSize: '14px', color: '#047857' }}>
+                          Balance: ${voucherData.balance}| Can apply: $
+                          {Math.min(voucherData.balance, total).toFixed(2)}
+                        </div>
+                      </div>
+                      <button
+                        onClick={applyVoucher}
+                        style={{
+                          padding: '6px 12px',
+                          backgroundColor: '#10B981',
+                          color: 'white',
+                          borderRadius: '6px',
+                          fontSize: '14px',
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Apply
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Applied Vouchers List */}
+                {appliedVouchers.length > 0 && (
+                  <div style={{ marginTop: '16px' }}>
+                    <label style={{ ...styles.label, marginBottom: '8px' }}>Applied Vouchers</label>
+                    {appliedVouchers.map((voucher) => (
+                      <div
+                        key={voucher.id}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '8px 12px',
+                          backgroundColor: '#EFF6FF',
+                          borderRadius: '6px',
+                          marginBottom: '8px',
+                          border: '1px solid #3B82F6',
+                        }}
+                      >
+                        <div>
+                          <div style={{ fontWeight: '600', color: '#1E40AF' }}>{voucher.code}</div>
+                          <div style={{ fontSize: '12px', color: '#1D4ED8' }}>
+                            Applied: ${voucher.appliedAmount.toFixed(2)}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => removeAppliedVoucher(voucher.id)}
+                          style={{
+                            color: '#EF4444',
+                            cursor: 'pointer',
+                            padding: '4px',
+                          }}
+                        >
+                          <X size={16} />
+                        </button>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
