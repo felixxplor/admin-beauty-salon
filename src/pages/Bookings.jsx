@@ -1313,61 +1313,124 @@ const BookingCalendar = () => {
 
       // Multi-client booking logic
       if (createFormData.numClients > 1) {
+        console.log('Creating bookings for', createFormData.numClients, 'clients')
+
+        // Validate all data before creating any bookings
+        for (let clientIndex = 0; clientIndex < createFormData.numClients; clientIndex++) {
+          const clientServices = getServicesForClient(clientIndex)
+          const clientStartTime = createFormData.clientStartTimes[clientIndex]
+
+          if (clientServices.length === 0) {
+            alert(
+              `Client ${
+                clientIndex + 1
+              } has no services assigned. Please assign services to all clients.`
+            )
+            setIsCreating(false)
+            return
+          }
+
+          if (!clientStartTime) {
+            alert(
+              `Client ${
+                clientIndex + 1
+              } has no start time selected. Please select start times for all clients.`
+            )
+            setIsCreating(false)
+            return
+          }
+
+          // Check if all services have staff assigned
+          for (const serviceInstance of clientServices) {
+            const staffId = createFormData.serviceStaffAssignments[serviceInstance.instanceId]
+            if (!staffId) {
+              alert(
+                `${serviceInstance.service.name} for Client ${
+                  clientIndex + 1
+                } has no staff assigned.`
+              )
+              setIsCreating(false)
+              return
+            }
+          }
+        }
+
         // Create separate bookings for each client
         for (let clientIndex = 0; clientIndex < createFormData.numClients; clientIndex++) {
           const clientServices = getServicesForClient(clientIndex)
+          const clientStartTime = createFormData.clientStartTimes[clientIndex] // FIX: Use client-specific start time
 
           if (clientServices.length === 0) continue // Skip if no services for this client
 
-          let currentStartTime = createFormData.startTime
+          let currentStartTime = clientStartTime // FIX: Use client-specific start time instead of createFormData.startTime
 
           // Create booking for each service for this client
           for (const serviceInstance of clientServices) {
-            const service = serviceInstance.service // Direct access to service object
-            const staffId = createFormData.serviceStaffAssignments[serviceInstance.instanceId] // Use instanceId for staff assignments
+            try {
+              const service = serviceInstance.service // Direct access to service object
+              const staffId = createFormData.serviceStaffAssignments[serviceInstance.instanceId] // Use instanceId for staff assignments
 
-            const startDateTime = createLocalDateTime(selectedDate, currentStartTime)
-            const endDateTime = new Date(startDateTime.getTime() + service.duration * 60000)
+              const startDateTime = createLocalDateTime(selectedDate, currentStartTime)
+              const endDateTime = new Date(startDateTime.getTime() + service.duration * 60000)
 
-            const formattedStartTime = formatDateForDatabase(startDateTime)
-            const formattedEndTime = formatDateForDatabase(endDateTime)
+              const formattedStartTime = formatDateForDatabase(startDateTime)
+              const formattedEndTime = formatDateForDatabase(endDateTime)
 
-            const regularPriceStr = service.regularPrice ? String(service.regularPrice) : '0'
-            const discountStr = service.discount ? String(service.discount) : '0'
-            const hasPlus = regularPriceStr.includes('+')
-            const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
-            const discountNum = parseFloat(discountStr.replace('+', ''))
-            const priceValue = hasPlus
-              ? `${regularPriceNum - discountNum}+`
-              : `${regularPriceNum - discountNum}`
+              const regularPriceStr = service.regularPrice ? String(service.regularPrice) : '0'
+              const discountStr = service.discount ? String(service.discount) : '0'
+              const hasPlus = regularPriceStr.includes('+')
+              const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
+              const discountNum = parseFloat(discountStr.replace('+', ''))
+              const priceValue = hasPlus
+                ? `${regularPriceNum - discountNum}+`
+                : `${regularPriceNum - discountNum}`
 
-            const bookingData = {
-              date: selectedDate,
-              startTime: formattedStartTime,
-              endTime: formattedEndTime,
-              numClients: 1, // Each booking is for one client
-              price: priceValue,
-              totalPrice: priceValue,
-              status: createFormData.status,
-              notes: `${createFormData.notes}${createFormData.notes ? ' | ' : ''}Client ${
-                clientIndex + 1
-              } of ${createFormData.numClients}`,
-              serviceIds: [parseInt(serviceInstance.serviceId)], // Use serviceInstance.serviceId
-              serviceId: parseInt(serviceInstance.serviceId), // Use serviceInstance.serviceId
-              isPaid: false,
-              extrasPrice: 0,
-              staffId: parseInt(staffId),
+              const bookingData = {
+                date: selectedDate,
+                startTime: formattedStartTime,
+                endTime: formattedEndTime,
+                numClients: 1, // Each booking is for one client
+                price: priceValue,
+                totalPrice: priceValue,
+                status: createFormData.status,
+                notes: `${createFormData.notes}${createFormData.notes ? ' | ' : ''}Client ${
+                  clientIndex + 1
+                } of ${createFormData.numClients}`,
+                serviceIds: [parseInt(serviceInstance.serviceId)], // Use serviceInstance.serviceId
+                serviceId: parseInt(serviceInstance.serviceId), // Use serviceInstance.serviceId
+                isPaid: false,
+                extrasPrice: 0,
+                staffId: parseInt(staffId),
+              }
+
+              if (createFormData.clientId) {
+                bookingData.clientId = parseInt(createFormData.clientId)
+              } else {
+                bookingData.name = `${createFormData.name || 'Client'} ${clientIndex + 1}`
+                bookingData.phone = createFormData.phone
+              }
+
+              console.log(
+                `Creating booking for Client ${clientIndex + 1}, Service: ${service.name}`,
+                bookingData
+              )
+              await createBooking(bookingData)
+              currentStartTime = calculateEndTime(currentStartTime, service.duration)
+            } catch (error) {
+              console.error(
+                `Error creating booking for Client ${clientIndex + 1}, Service ${
+                  serviceInstance.service.name
+                }:`,
+                error
+              )
+              alert(
+                `Failed to create booking for Client ${clientIndex + 1} - ${
+                  serviceInstance.service.name
+                }: ${error.message}`
+              )
+              setIsCreating(false)
+              return
             }
-
-            if (createFormData.clientId) {
-              bookingData.clientId = parseInt(createFormData.clientId)
-            } else {
-              bookingData.name = `${createFormData.name || 'Client'} ${clientIndex + 1}`
-              bookingData.phone = createFormData.phone
-            }
-
-            await createBooking(bookingData)
-            currentStartTime = calculateEndTime(currentStartTime, service.duration)
           }
         }
       } else {
@@ -1485,6 +1548,7 @@ const BookingCalendar = () => {
         phone: '',
         selectedServices: [], // Changed from selectedServiceIds
         startTime: '',
+        clientStartTimes: {}, // FIX: Add this to reset client start times
         staffId: '',
         numClients: 1,
         notes: '',
@@ -2581,9 +2645,9 @@ const BookingCalendar = () => {
                             }}
                           >
                             {serviceInstance.service.name} ({serviceInstance.service.duration} min)
-                            <span style={{ fontSize: '11px', color: '#666', marginLeft: '8px' }}>
-                              Instance #{index + 1}
-                            </span>
+                            {/* <span style={{ fontSize: '11px', color: '#666', marginLeft: '8px' }}>
+                              Client #{index + 1}
+                            </span> */}
                           </div>
                           <select
                             style={calendarStyles.select}
@@ -2635,58 +2699,60 @@ const BookingCalendar = () => {
                   </div>
                 )}
 
-                {/* Multiple Bookings Toggle */}
-                {createFormData.selectedServices && createFormData.selectedServices.length > 1 && (
-                  <div
-                    style={{
-                      ...calendarStyles.formGroup,
-                      backgroundColor: '#f0f9ff',
-                      padding: '12px',
-                      borderRadius: '6px',
-                      border: '1px solid #bfdbfe',
-                    }}
-                  >
-                    <label
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        cursor: 'pointer',
-                        fontSize: '14px',
-                      }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={createFormData.createSeparateBookings}
-                        onChange={(e) =>
-                          setCreateFormData((prev) => ({
-                            ...prev,
-                            createSeparateBookings: e.target.checked,
-                          }))
-                        }
-                        style={{ marginRight: '8px', width: '16px', height: '16px' }}
-                      />
-                      <span style={{ fontWeight: '600' }}>
-                        Create separate bookings for each service
-                      </span>
-                    </label>
+                {/* Multiple Bookings Toggle - Show for single client with multiple services */}
+                {createFormData.numClients === 1 &&
+                  createFormData.selectedServices &&
+                  createFormData.selectedServices.length > 1 && (
                     <div
                       style={{
-                        fontSize: '12px',
-                        color: '#1e40af',
-                        marginTop: '6px',
-                        marginLeft: '24px',
+                        ...calendarStyles.formGroup,
+                        backgroundColor: '#f0f9ff',
+                        padding: '12px',
+                        borderRadius: '6px',
+                        border: '1px solid #bfdbfe',
                       }}
                     >
-                      {createFormData.createSeparateBookings
-                        ? '✓ Services will be scheduled consecutively with individual staff assignments'
-                        : 'All services will be combined in one booking'}
+                      <label
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          cursor: 'pointer',
+                          fontSize: '14px',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={createFormData.createSeparateBookings}
+                          onChange={(e) =>
+                            setCreateFormData((prev) => ({
+                              ...prev,
+                              createSeparateBookings: e.target.checked,
+                            }))
+                          }
+                          style={{ marginRight: '8px', width: '16px', height: '16px' }}
+                        />
+                        <span style={{ fontWeight: '600' }}>
+                          Create separate bookings for each service
+                        </span>
+                      </label>
+                      <div
+                        style={{
+                          fontSize: '12px',
+                          color: '#1e40af',
+                          marginTop: '6px',
+                          marginLeft: '24px',
+                        }}
+                      >
+                        {createFormData.createSeparateBookings
+                          ? '✓ Services will be scheduled consecutively with individual staff assignments'
+                          : 'All services will be combined in one booking'}
+                      </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
                 {/* Staff Assignment Section - Updated for Multi-Client */}
                 {createFormData.numClients > 1 ? (
-                  // Show individual service-staff assignments for multiple clients
+                  // Multiple clients - always show individual service assignments
                   createFormData.selectedServices &&
                   createFormData.selectedServices.length > 0 && (
                     <div style={calendarStyles.formGroup}>
@@ -2726,11 +2792,11 @@ const BookingCalendar = () => {
                                 }}
                               >
                                 {service.name} ({service.duration} min)
-                                <span
+                                {/* <span
                                   style={{ fontSize: '11px', color: '#666', marginLeft: '8px' }}
                                 >
-                                  Instance #{index + 1}
-                                </span>
+                                  Client #{index + 1}
+                                </span> */}
                               </div>
                               <select
                                 style={calendarStyles.select}
@@ -2764,6 +2830,7 @@ const BookingCalendar = () => {
                     </div>
                   )
                 ) : // Show single staff selection for single client (existing logic)
+                // Single client logic
                 createFormData.createSeparateBookings &&
                   createFormData.selectedServices &&
                   createFormData.selectedServices.length > 1 ? (
@@ -2804,9 +2871,9 @@ const BookingCalendar = () => {
                               }}
                             >
                               {service.name} ({service.duration} min)
-                              <span style={{ fontSize: '11px', color: '#666', marginLeft: '8px' }}>
-                                Instance #{index + 1}
-                              </span>
+                              {/* <span style={{ fontSize: '11px', color: '#666', marginLeft: '8px' }}>
+                                Client #{index + 1}
+                              </span> */}
                             </div>
                             <select
                               style={calendarStyles.select}
@@ -2864,335 +2931,286 @@ const BookingCalendar = () => {
 
                 {/* Replace your existing Start Time section with this FIXED version: */}
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  <div style={calendarStyles.formGroup}>
-                    <label style={calendarStyles.label}>
-                      {/* Start Time Section - Updated for Multi-Client */}
-                      {createFormData.numClients > 1 ? (
-                        // Multiple clients - individual start times
-                        <div style={calendarStyles.formGroup}>
-                          <label style={calendarStyles.label}>Start Times for Each Client *</label>
-                          <div
-                            style={{
-                              border: '1px solid #d1d5db',
-                              borderRadius: '6px',
-                              padding: '12px',
-                              backgroundColor: 'white',
-                            }}
-                          >
-                            {Array.from({ length: createFormData.numClients }, (_, clientIndex) => {
-                              const clientServices = getServicesForClient(clientIndex)
-                              const allServicesHaveStaff = clientServices.every(
-                                (serviceInstance) =>
-                                  createFormData.serviceStaffAssignments[serviceInstance.instanceId]
-                              )
+                  {/* Start Time Section - CORRECTED */}
+                  {createFormData.numClients > 1 ? (
+                    // Multiple clients - individual start times
+                    <div style={calendarStyles.formGroup}>
+                      <label style={calendarStyles.label}>Start Times for Each Client *</label>
+                      <div
+                        style={{
+                          border: '1px solid #d1d5db',
+                          borderRadius: '6px',
+                          padding: '12px',
+                          backgroundColor: 'white',
+                        }}
+                      >
+                        {Array.from({ length: createFormData.numClients }, (_, clientIndex) => {
+                          const clientServices = getServicesForClient(clientIndex)
+                          const allServicesHaveStaff = clientServices.every(
+                            (serviceInstance) =>
+                              createFormData.serviceStaffAssignments[serviceInstance.instanceId]
+                          )
 
-                              let availableSlots = []
-                              if (allServicesHaveStaff && clientServices.length > 0) {
-                                const currentDayBookings = bookingsByDate[selectedDate] || []
-                                availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
-                                  clientServices,
-                                  createFormData.serviceStaffAssignments,
-                                  currentDayBookings,
-                                  services,
-                                  selectedDate
-                                )
-                              }
+                          let availableSlots = []
+                          if (allServicesHaveStaff && clientServices.length > 0) {
+                            const currentDayBookings = bookingsByDate[selectedDate] || []
+                            availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
+                              clientServices,
+                              createFormData.serviceStaffAssignments,
+                              currentDayBookings,
+                              services,
+                              selectedDate
+                            )
+                          }
 
-                              return (
-                                <div
-                                  key={clientIndex}
-                                  style={{
-                                    marginBottom:
-                                      clientIndex < createFormData.numClients - 1 ? '16px' : '0',
-                                    paddingBottom:
-                                      clientIndex < createFormData.numClients - 1 ? '16px' : '0',
-                                    borderBottom:
-                                      clientIndex < createFormData.numClients - 1
-                                        ? '1px solid #e5e7eb'
-                                        : 'none',
-                                  }}
-                                >
-                                  <div
+                          return (
+                            <div
+                              key={clientIndex}
+                              style={{
+                                marginBottom:
+                                  clientIndex < createFormData.numClients - 1 ? '16px' : '0',
+                                paddingBottom:
+                                  clientIndex < createFormData.numClients - 1 ? '16px' : '0',
+                                borderBottom:
+                                  clientIndex < createFormData.numClients - 1
+                                    ? '1px solid #e5e7eb'
+                                    : 'none',
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontSize: '14px',
+                                  fontWeight: '600',
+                                  marginBottom: '8px',
+                                  color: '#374151',
+                                }}
+                              >
+                                Client {clientIndex + 1} Start Time
+                                {clientServices.length > 0 && (
+                                  <span
                                     style={{
-                                      fontSize: '14px',
-                                      fontWeight: '600',
-                                      marginBottom: '8px',
-                                      color: '#374151',
+                                      fontSize: '12px',
+                                      fontWeight: '400',
+                                      color: '#666',
+                                      marginLeft: '8px',
                                     }}
                                   >
-                                    Client {clientIndex + 1} Start Time
-                                    {clientServices.length > 0 && (
-                                      <span
-                                        style={{
-                                          fontSize: '12px',
-                                          fontWeight: '400',
-                                          color: '#666',
-                                          marginLeft: '8px',
-                                        }}
-                                      >
-                                        ({clientServices.map((s) => s.service.name).join(', ')})
-                                      </span>
-                                    )}
-                                  </div>
+                                    ({clientServices.map((s) => s.service.name).join(', ')})
+                                  </span>
+                                )}
+                              </div>
 
-                                  <select
-                                    style={calendarStyles.select}
-                                    value={createFormData.clientStartTimes[clientIndex] || ''}
-                                    onChange={(e) =>
-                                      handleClientStartTimeAssignment(clientIndex, e.target.value)
-                                    }
-                                    required
-                                    disabled={!allServicesHaveStaff || clientServices.length === 0}
-                                  >
-                                    <option value="">Select start time</option>
-                                    {availableSlots.map((time) => (
-                                      <option key={time} value={time}>
-                                        {time}
-                                      </option>
-                                    ))}
-                                  </select>
-
-                                  {/* Status message for each client */}
-                                  <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                                    {clientServices.length === 0 ? (
-                                      <span style={{ color: '#dc2626' }}>
-                                        ⚠️ No services assigned to this client
-                                      </span>
-                                    ) : !allServicesHaveStaff ? (
-                                      <span style={{ color: '#dc2626' }}>
-                                        ⚠️ Assign staff to all services first
-                                      </span>
-                                    ) : availableSlots.length === 0 ? (
-                                      <span style={{ color: '#dc2626' }}>
-                                        ⚠️ No available time slots
-                                      </span>
-                                    ) : (
-                                      <span style={{ color: '#059669' }}>
-                                        ✓ {availableSlots.length} time slot
-                                        {availableSlots.length !== 1 ? 's' : ''} available
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  {/* Show estimated end time */}
-                                  {createFormData.clientStartTimes[clientIndex] &&
-                                    clientServices.length > 0 && (
-                                      <div
-                                        style={{
-                                          fontSize: '11px',
-                                          color: '#666',
-                                          marginTop: '4px',
-                                        }}
-                                      >
-                                        Estimated end time:{' '}
-                                        {(() => {
-                                          const totalDuration = clientServices.reduce(
-                                            (sum, serviceInstance) =>
-                                              sum + serviceInstance.service.duration,
-                                            0
-                                          )
-                                          return calculateEndTime(
-                                            createFormData.clientStartTimes[clientIndex],
-                                            totalDuration
-                                          )
-                                        })()}
-                                      </div>
-                                    )}
-                                </div>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      ) : (
-                        // Single client - existing logic
-                        <div
-                          style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}
-                        >
-                          <div style={calendarStyles.formGroup}>
-                            <label style={calendarStyles.label}>
-                              {createFormData.createSeparateBookings &&
-                              createFormData.selectedServices &&
-                              createFormData.selectedServices.length > 1
-                                ? 'Start Time (for first service)'
-                                : 'Start Time'}
-                            </label>
-                            <select
-                              style={calendarStyles.select}
-                              value={createFormData.startTime}
-                              onChange={(e) =>
-                                setCreateFormData((prev) => ({
-                                  ...prev,
-                                  startTime: e.target.value,
-                                }))
-                              }
-                              required
-                            >
-                              <option value="">Select time</option>
-                              {(() => {
-                                let availableSlots = []
-                                const currentDayBookings = bookingsByDate[selectedDate] || []
-
-                                if (
-                                  createFormData.createSeparateBookings &&
-                                  createFormData.selectedServices &&
-                                  createFormData.selectedServices.length > 1
-                                ) {
-                                  availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
-                                    createFormData.selectedServices,
-                                    createFormData.serviceStaffAssignments,
-                                    currentDayBookings,
-                                    services,
-                                    selectedDate
-                                  )
-                                } else {
-                                  availableSlots = timeSlots.filter((timeSlot) => {
-                                    return isTimeSlotAvailable(
-                                      timeSlot,
-                                      createFormData.staffId,
-                                      currentDayBookings,
-                                      selectedDate,
-                                      selectedServicesInfo.totalDuration
-                                    )
-                                  })
+                              <select
+                                style={calendarStyles.select}
+                                value={
+                                  createFormData.clientStartTimes
+                                    ? createFormData.clientStartTimes[clientIndex] || ''
+                                    : ''
                                 }
-
-                                return availableSlots.map((time) => (
+                                onChange={(e) =>
+                                  handleClientStartTimeAssignment(clientIndex, e.target.value)
+                                }
+                                required
+                                disabled={!allServicesHaveStaff || clientServices.length === 0}
+                              >
+                                <option value="">Select start time</option>
+                                {availableSlots.map((time) => (
                                   <option key={time} value={time}>
                                     {time}
                                   </option>
-                                ))
-                              })()}
-                            </select>
-                          </div>
+                                ))}
+                              </select>
 
-                          <div style={calendarStyles.formGroup}>
-                            <label style={calendarStyles.label}>End Time (Auto-calculated)</label>
-                            <input
-                              type="text"
-                              style={{ ...calendarStyles.input, backgroundColor: '#f9fafb' }}
-                              value={calculateEndTime(
-                                createFormData.startTime,
-                                selectedServicesInfo.totalDuration
-                              )}
-                              disabled
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </label>
-                    <select
-                      style={calendarStyles.select}
-                      value={createFormData.startTime}
-                      onChange={(e) =>
-                        setCreateFormData((prev) => ({ ...prev, startTime: e.target.value }))
-                      }
-                      required
-                    >
-                      <option value="">Select time</option>
-                      {(() => {
-                        let availableSlots = []
-                        const currentDayBookings = bookingsByDate[selectedDate] || [] // FIX: Get day bookings
+                              <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                                {clientServices.length === 0 ? (
+                                  <span style={{ color: '#dc2626' }}>
+                                    ⚠️ No services assigned to this client
+                                  </span>
+                                ) : !allServicesHaveStaff ? (
+                                  <span style={{ color: '#dc2626' }}>
+                                    ⚠️ Assign staff to all services first
+                                  </span>
+                                ) : availableSlots.length === 0 ? (
+                                  <span style={{ color: '#dc2626' }}>
+                                    ⚠️ No available time slots
+                                  </span>
+                                ) : (
+                                  <span style={{ color: '#059669' }}>
+                                    ✓ {availableSlots.length} time slot
+                                    {availableSlots.length !== 1 ? 's' : ''} available
+                                  </span>
+                                )}
+                              </div>
 
-                        if (
-                          createFormData.createSeparateBookings &&
+                              {createFormData.clientStartTimes &&
+                                createFormData.clientStartTimes[clientIndex] &&
+                                clientServices.length > 0 && (
+                                  <div
+                                    style={{
+                                      fontSize: '11px',
+                                      color: '#666',
+                                      marginTop: '4px',
+                                    }}
+                                  >
+                                    Estimated end time:{' '}
+                                    {(() => {
+                                      const totalDuration = clientServices.reduce(
+                                        (sum, serviceInstance) =>
+                                          sum + serviceInstance.service.duration,
+                                        0
+                                      )
+                                      return calculateEndTime(
+                                        createFormData.clientStartTimes[clientIndex],
+                                        totalDuration
+                                      )
+                                    })()}
+                                  </div>
+                                )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  ) : (
+                    // Single client - one start time
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                      <div style={calendarStyles.formGroup}>
+                        <label style={calendarStyles.label}>
+                          {createFormData.createSeparateBookings &&
                           createFormData.selectedServices &&
                           createFormData.selectedServices.length > 1
-                        ) {
-                          // For separate bookings - check consecutive availability
-                          availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
-                            createFormData.selectedServices,
-                            createFormData.serviceStaffAssignments,
-                            currentDayBookings,
-                            services,
-                            selectedDate
-                          )
-                        } else {
-                          // For single booking - filter by staff availability
-                          availableSlots = timeSlots.filter((timeSlot) => {
-                            return isTimeSlotAvailable(
-                              timeSlot,
-                              createFormData.staffId,
-                              currentDayBookings, // FIX: Use currentDayBookings
-                              selectedDate,
-                              selectedServicesInfo.totalDuration
+                            ? 'Start Time (for first service)'
+                            : 'Start Time'}
+                        </label>
+                        <select
+                          style={calendarStyles.select}
+                          value={createFormData.startTime}
+                          onChange={(e) =>
+                            setCreateFormData((prev) => ({
+                              ...prev,
+                              startTime: e.target.value,
+                            }))
+                          }
+                          required
+                        >
+                          <option value="">Select time</option>
+                          {(() => {
+                            let availableSlots = []
+                            const currentDayBookings = bookingsByDate[selectedDate] || []
+
+                            if (
+                              createFormData.createSeparateBookings &&
+                              createFormData.selectedServices &&
+                              createFormData.selectedServices.length > 1
+                            ) {
+                              availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
+                                createFormData.selectedServices,
+                                createFormData.serviceStaffAssignments,
+                                currentDayBookings,
+                                services,
+                                selectedDate
+                              )
+                            } else {
+                              availableSlots = timeSlots.filter((timeSlot) => {
+                                return isTimeSlotAvailable(
+                                  timeSlot,
+                                  createFormData.staffId,
+                                  currentDayBookings,
+                                  selectedDate,
+                                  selectedServicesInfo.totalDuration
+                                )
+                              })
+                            }
+
+                            return availableSlots.map((time) => (
+                              <option key={time} value={time}>
+                                {time}
+                              </option>
+                            ))
+                          })()}
+                        </select>
+
+                        {(() => {
+                          let availableCount = 0
+                          const currentDayBookings = bookingsByDate[selectedDate] || []
+
+                          if (
+                            createFormData.createSeparateBookings &&
+                            createFormData.selectedServices &&
+                            createFormData.selectedServices.length > 1
+                          ) {
+                            availableCount = getAvailableTimeSlotsForConsecutiveBookings(
+                              createFormData.selectedServices,
+                              createFormData.serviceStaffAssignments,
+                              currentDayBookings,
+                              services,
+                              selectedDate
+                            ).length
+                          } else if (createFormData.staffId) {
+                            availableCount = timeSlots.filter((timeSlot) =>
+                              isTimeSlotAvailable(
+                                timeSlot,
+                                createFormData.staffId,
+                                currentDayBookings,
+                                selectedDate,
+                                selectedServicesInfo.totalDuration
+                              )
+                            ).length
+                          }
+
+                          if (
+                            availableCount === 0 &&
+                            (createFormData.staffId ||
+                              (createFormData.createSeparateBookings &&
+                                Object.keys(createFormData.serviceStaffAssignments).length > 0))
+                          ) {
+                            return (
+                              <div
+                                style={{
+                                  fontSize: '12px',
+                                  color: '#dc2626',
+                                  marginTop: '4px',
+                                  padding: '8px',
+                                  backgroundColor: '#fee2e2',
+                                  borderRadius: '4px',
+                                }}
+                              >
+                                ⚠️ No available time slots for the selected configuration
+                              </div>
                             )
-                          })
-                        }
+                          } else if (availableCount > 0) {
+                            return (
+                              <div style={{ fontSize: '12px', color: '#059669', marginTop: '4px' }}>
+                                ✓ {availableCount} time slot{availableCount !== 1 ? 's' : ''}{' '}
+                                available
+                              </div>
+                            )
+                          }
 
-                        return availableSlots.map((time) => (
-                          <option key={time} value={time}>
-                            {time}
-                          </option>
-                        ))
-                      })()}
-                    </select>
-
-                    {/* Show helpful messages */}
-                    {(() => {
-                      let availableCount = 0
-                      const currentDayBookings = bookingsByDate[selectedDate] || [] // FIX: Get day bookings
-
-                      if (
-                        createFormData.createSeparateBookings &&
-                        createFormData.selectedServices &&
-                        createFormData.selectedServices.length > 1
-                      ) {
-                        availableCount = getAvailableTimeSlotsForConsecutiveBookings(
-                          createFormData.selectedServices,
-                          createFormData.serviceStaffAssignments,
-                          currentDayBookings,
-                          services,
-                          selectedDate
-                        ).length
-                      } else if (createFormData.staffId) {
-                        availableCount = timeSlots.filter((timeSlot) =>
-                          isTimeSlotAvailable(
-                            timeSlot,
-                            createFormData.staffId,
-                            currentDayBookings, // FIX: Use currentDayBookings
-                            selectedDate,
-                            selectedServicesInfo.totalDuration
+                          return (
+                            <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
+                              {createFormData.createSeparateBookings
+                                ? 'Select staff for all services to see available times'
+                                : 'Select a staff member to see available times'}
+                            </div>
                           )
-                        ).length
-                      }
+                        })()}
+                      </div>
 
-                      if (
-                        availableCount === 0 &&
-                        (createFormData.staffId ||
-                          (createFormData.createSeparateBookings &&
-                            Object.keys(createFormData.serviceStaffAssignments).length > 0))
-                      ) {
-                        return (
-                          <div
-                            style={{
-                              fontSize: '12px',
-                              color: '#dc2626',
-                              marginTop: '4px',
-                              padding: '8px',
-                              backgroundColor: '#fee2e2',
-                              borderRadius: '4px',
-                            }}
-                          >
-                            ⚠️ No available time slots for the selected configuration
-                          </div>
-                        )
-                      } else if (availableCount > 0) {
-                        return (
-                          <div style={{ fontSize: '12px', color: '#059669', marginTop: '4px' }}>
-                            ✓ {availableCount} time slot{availableCount !== 1 ? 's' : ''} available
-                          </div>
-                        )
-                      }
-
-                      return (
-                        <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                          {createFormData.createSeparateBookings
-                            ? 'Select staff for all services to see available times'
-                            : 'Select a staff member to see available times'}
-                        </div>
-                      )
-                    })()}
-                  </div>
+                      <div style={calendarStyles.formGroup}>
+                        <label style={calendarStyles.label}>End Time (Auto-calculated)</label>
+                        <input
+                          type="text"
+                          style={{ ...calendarStyles.input, backgroundColor: '#f9fafb' }}
+                          value={calculateEndTime(
+                            createFormData.startTime,
+                            selectedServicesInfo.totalDuration
+                          )}
+                          disabled
+                        />
+                      </div>
+                    </div>
+                  )}
 
                   <div style={calendarStyles.formGroup}>
                     <label style={calendarStyles.label}>End Time (Auto-calculated)</label>
@@ -3356,47 +3374,6 @@ const BookingCalendar = () => {
                   </select>
                   <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
                     This will create a specific shift for this date only
-                  </div>
-                </div>
-
-                {/* Time Selection */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  <div style={calendarStyles.formGroup}>
-                    <label style={calendarStyles.label}>Start Time *</label>
-                    <select
-                      style={calendarStyles.select}
-                      value={shiftFormData.startTime}
-                      onChange={(e) =>
-                        setShiftFormData((prev) => ({ ...prev, startTime: e.target.value }))
-                      }
-                      required
-                    >
-                      <option value="">Select start time</option>
-                      {timeSlots.map((time) => (
-                        <option key={time} value={time}>
-                          {time}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div style={calendarStyles.formGroup}>
-                    <label style={calendarStyles.label}>End Time *</label>
-                    <select
-                      style={calendarStyles.select}
-                      value={shiftFormData.endTime}
-                      onChange={(e) =>
-                        setShiftFormData((prev) => ({ ...prev, endTime: e.target.value }))
-                      }
-                      required
-                    >
-                      <option value="">Select end time</option>
-                      {timeSlots.map((time) => (
-                        <option key={time} value={time}>
-                          {time}
-                        </option>
-                      ))}
-                    </select>
                   </div>
                 </div>
 
