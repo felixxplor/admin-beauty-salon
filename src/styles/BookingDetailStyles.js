@@ -241,7 +241,6 @@ export const modalStyles = {
   },
   modal: {
     backgroundColor: 'white',
-    borderRadius: '12px',
     padding: '24px',
     width: '90%',
     maxWidth: '600px',

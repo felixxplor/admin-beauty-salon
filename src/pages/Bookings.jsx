@@ -3,11 +3,18 @@ import { getStaff } from '../services/apiStaff'
 import { getServices } from '../services/apiServices'
 import { useBookings } from '../features/bookings/useBookings'
 import Spinner from '../ui/Spinner'
-import { calendarStyles } from '../styles/CalendarStyles'
+import { responsiveCalendarStyles, SLOT_HEIGHT } from '../styles/ResponsiveCalendarStyles'
 import { createBooking } from '../services/apiBookings'
 import { getClient } from '../services/apiClients'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import supabase from '../services/supabase'
+import { calendarStyles } from '../styles/CalendarStyles'
+import {
+  CreateBookingModal,
+  CreateLeaveModal,
+  CreateShiftModal,
+  NoStaffWarningModal,
+} from '../ui/BookingModals'
 
 // Absence types for leave management
 const absenceTypes = [
@@ -264,6 +271,7 @@ const getAvailableTimeSlotsForConsecutiveBookings = (
     return true
   })
 }
+
 // Custom hook to get staff absences for a specific date
 const useStaffAbsences = (date) => {
   const [absences, setAbsences] = useState([])
@@ -438,6 +446,43 @@ const formatShiftTime = (timeString) => {
   return `${displayHour}:${minutes} ${ampm}`
 }
 
+// Hook to detect device type and screen size
+const useDeviceType = () => {
+  const [deviceType, setDeviceType] = useState('desktop')
+  const [screenSize, setScreenSize] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  })
+
+  useEffect(() => {
+    const updateDeviceType = () => {
+      const width = window.innerWidth
+      const height = window.innerHeight
+
+      setScreenSize({ width, height })
+
+      if (width <= 768) {
+        setDeviceType('mobile')
+      } else if (width <= 1024) {
+        setDeviceType('tablet')
+      } else {
+        setDeviceType('desktop')
+      }
+    }
+
+    updateDeviceType()
+    window.addEventListener('resize', updateDeviceType)
+    window.addEventListener('orientationchange', updateDeviceType)
+
+    return () => {
+      window.removeEventListener('resize', updateDeviceType)
+      window.removeEventListener('orientationchange', updateDeviceType)
+    }
+  }, [])
+
+  return { deviceType, screenSize }
+}
+
 const BookingCalendar = () => {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
@@ -449,6 +494,7 @@ const BookingCalendar = () => {
   const [isCreating, setIsCreating] = useState(false)
   const [serviceSearchTerm, setServiceSearchTerm] = useState('')
   const [currentTime, setCurrentTime] = useState(new Date())
+  const { deviceType, screenSize } = useDeviceType()
 
   // Shift creation state
   const [showShiftModal, setShowShiftModal] = useState(false)
@@ -971,8 +1017,43 @@ const BookingCalendar = () => {
       originalTime: time,
     })
     setIsDragging(true)
+
+    // Create custom drag preview
+    const dragPreview = document.createElement('div')
+    dragPreview.style.cssText = `
+    position: absolute;
+    top: -1000px;
+    left: -1000px;
+    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    color: white;
+    padding: 12px 16px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
+    min-width: 120px;
+    text-align: center;
+  `
+    dragPreview.innerHTML = `
+    <div>📅 ${booking.service}</div>
+    <div style="font-size: 11px; opacity: 0.9; margin-top: 2px;">
+      ${booking.client}
+    </div>
+  `
+
+    document.body.appendChild(dragPreview)
+    e.dataTransfer.setDragImage(dragPreview, 60, 30)
+
+    // Clean up after drag image is captured
+    setTimeout(() => {
+      document.body.removeChild(dragPreview)
+    }, 0)
+
     e.dataTransfer.effectAllowed = 'move'
+
+    // Style the original element being dragged
     e.currentTarget.style.opacity = '0.5'
+    e.currentTarget.style.transform = 'scale(0.95)'
     e.currentTarget.style.cursor = 'grabbing'
   }
 
@@ -982,6 +1063,48 @@ const BookingCalendar = () => {
     setDraggedBooking(null)
     setDragTarget(null)
     setIsDragging(false)
+  }
+
+  const getDropZoneStatus = (targetStaff, targetTime, draggedBooking, dayBookings) => {
+    if (!draggedBooking) return { type: 'none' }
+
+    const { booking } = draggedBooking
+    const duration = booking.duration || 60
+
+    // Check if it's the same position
+    if (
+      targetStaff.id === draggedBooking.originalStaff.id &&
+      targetTime === draggedBooking.originalTime
+    ) {
+      return { type: 'same', message: 'Original position' }
+    }
+
+    // Check for scheduling conflicts
+    const hasConflict = checkBookingConflict(
+      targetStaff,
+      targetTime,
+      duration,
+      booking.id,
+      dayBookings
+    )
+
+    if (hasConflict) {
+      return {
+        type: 'conflict',
+        message: 'Time conflict',
+      }
+    }
+
+    // Check if staff is working
+    const isStaffWorking = workingStaff.some((staff) => staff.id === targetStaff.id)
+    if (!isStaffWorking) {
+      return {
+        type: 'invalid',
+        message: 'Staff not scheduled',
+      }
+    }
+
+    return { type: 'valid', message: 'Drop here' }
   }
 
   const handleDragOver = (e) => {
@@ -1031,28 +1154,56 @@ const BookingCalendar = () => {
     if (!draggedBooking) return
 
     const { booking, originalStaff, originalTime } = draggedBooking
+    const currentDayBookings = bookingsByDate[selectedDate] || []
+    const dropStatus = getDropZoneStatus(
+      targetStaff,
+      targetTime,
+      draggedBooking,
+      currentDayBookings
+    )
 
-    const staffChanged = targetStaff.id !== originalStaff.id
-    const timeChanged = targetTime !== originalTime
-
-    if (!staffChanged && !timeChanged) {
+    // Don't do anything if dropping in the same position
+    if (dropStatus.type === 'same') {
       setDraggedBooking(null)
       setDragTarget(null)
       setIsDragging(false)
       return
     }
 
-    const dayBookings = bookingsByDate[selectedDate] || []
-
-    // Check for conflicts
-    if (checkBookingConflict(targetStaff, targetTime, booking.duration, booking.id, dayBookings)) {
-      alert('⚠️ This time slot conflicts with another booking for this staff member!')
+    // Only prevent invalid drops (staff not scheduled)
+    if (dropStatus.type === 'invalid') {
+      alert(`❌ Cannot move booking: ${dropStatus.message}`)
       setDraggedBooking(null)
       setDragTarget(null)
       setIsDragging(false)
       return
     }
 
+    // Show confirmation modal for all valid drops
+    const staffName = targetStaff.name || 'Staff'
+    const clientName = booking.client || 'Client'
+    const serviceName = booking.service || 'Service'
+
+    let confirmMessage = `Move booking to ${targetTime}?\n\n`
+    confirmMessage += `📅 ${serviceName}\n`
+    confirmMessage += `👤 ${clientName}\n`
+    confirmMessage += `🧑‍⚕️ ${staffName}\n`
+    confirmMessage += `⏰ ${targetTime}\n`
+
+    if (dropStatus.type === 'conflict') {
+      confirmMessage += `\n⚠️ WARNING: This will create a time conflict with another booking!`
+    }
+
+    const confirmDrop = window.confirm(confirmMessage)
+
+    if (!confirmDrop) {
+      setDraggedBooking(null)
+      setDragTarget(null)
+      setIsDragging(false)
+      return
+    }
+
+    // Proceed with the move
     try {
       const newStartDateTime = createLocalDateTime(selectedDate, targetTime)
       const duration = booking.duration || 60
@@ -1072,8 +1223,43 @@ const BookingCalendar = () => {
 
       if (error) throw error
 
-      const staffName = targetStaff.name || 'staff member'
-      alert(`✓ Booking moved to ${staffName} at ${targetTime}`)
+      // Clean success notification
+      const successMessage =
+        dropStatus.type === 'conflict'
+          ? '✓ Booking moved successfully (with conflict)'
+          : '✓ Booking moved successfully!'
+
+      // Show brief success notification in top-right corner
+      const notification = document.createElement('div')
+      notification.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #16a34a;
+      color: white;
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      z-index: 10000;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+      transform: translateX(100%);
+      animation: slideIn 0.3s ease-out forwards;
+    `
+      notification.innerHTML = `
+      <style>
+        @keyframes slideIn {
+          to { transform: translateX(0); }
+        }
+      </style>
+      ${successMessage}
+    `
+      document.body.appendChild(notification)
+
+      setTimeout(() => {
+        notification.style.animation = 'slideOut 0.3s ease-in forwards'
+        setTimeout(() => notification.remove(), 300)
+      }, 2500)
 
       if (refetch) await refetch()
     } catch (error) {
@@ -1210,7 +1396,7 @@ const BookingCalendar = () => {
     // Calculate position relative to start time
     const minutesFromStart = currentTimeInMinutes - startMinutes
     // Each time slot is 40px high and represents 15 minutes
-    const pixelsPerMinute = 40 / 15
+    const pixelsPerMinute = SLOT_HEIGHT[deviceType] / 15
     const position = minutesFromStart * pixelsPerMinute
 
     return position
@@ -1258,7 +1444,7 @@ const BookingCalendar = () => {
     const startMinutes = timeToMinutes(booking.time)
     const endMinutes = timeToMinutes(booking.endTime)
     const durationMinutes = endMinutes - startMinutes
-    const slotsSpanned = Math.ceil(durationMinutes / 15)
+    const slotsSpanned = Math.max(1, Math.ceil(durationMinutes / 15))
 
     return {
       booking,
@@ -1583,7 +1769,7 @@ const BookingCalendar = () => {
 
   if (staffError) {
     return (
-      <div style={{ padding: '24px', textAlign: 'center', color: '#ef4444' }}>
+      <div style={responsiveCalendarStyles.errorContainer(deviceType)}>
         Error loading staff: {staffError.message}
       </div>
     )
@@ -1591,7 +1777,7 @@ const BookingCalendar = () => {
 
   if (servicesError) {
     return (
-      <div style={{ padding: '24px', textAlign: 'center', color: '#ef4444' }}>
+      <div style={responsiveCalendarStyles.errorContainer(deviceType)}>
         Error loading services: {servicesError.message}
       </div>
     )
@@ -1599,7 +1785,7 @@ const BookingCalendar = () => {
 
   if (clientsError) {
     return (
-      <div style={{ padding: '24px', textAlign: 'center', color: '#ef4444' }}>
+      <div style={responsiveCalendarStyles.errorContainer(deviceType)}>
         Error loading clients: {clientsError.message}
       </div>
     )
@@ -1607,7 +1793,7 @@ const BookingCalendar = () => {
 
   if (workingStaffError) {
     return (
-      <div style={{ padding: '24px', textAlign: 'center', color: '#ef4444' }}>
+      <div style={responsiveCalendarStyles.errorContainer(deviceType)}>
         Error loading working staff: {workingStaffError.message}
       </div>
     )
@@ -1658,6 +1844,17 @@ const BookingCalendar = () => {
     setView('day')
   }
 
+  const simpleDropStyles = {
+    validDrop: {
+      backgroundColor: '#dcfce7',
+      border: '2px dashed #16a34a',
+    },
+    invalidDrop: {
+      backgroundColor: '#fef2f2',
+      border: '2px dashed #dc2626',
+    },
+  }
+
   if (view === 'day' && selectedDate) {
     const dayBookings = bookingsByDate[selectedDate] || []
     const staffGridColumns =
@@ -1666,63 +1863,16 @@ const BookingCalendar = () => {
     const showCurrentTimeLine = isSelectedDateToday() && currentTimePosition !== null
 
     return (
-      <div
-        style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          width: '100%',
-          height: '100%',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          backgroundColor: 'white',
-        }}
-      >
+      <div style={responsiveCalendarStyles.dayViewContainer(deviceType)}>
         {/* Day View Header */}
-        <div
-          style={{
-            padding: '16px 24px',
-            backgroundColor: 'white',
-            boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            flexShrink: 0,
-            zIndex: 100,
-          }}
-        >
-          <div
-            style={{
-              width: '100%',
-              maxWidth: '1600px',
-              display: 'grid',
-              gridTemplateColumns: '1fr auto 1fr',
-              alignItems: 'center',
-              gap: '16px',
-            }}
-          >
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '16px',
-                justifyContent: 'flex-start',
-              }}
-            >
+        <div style={responsiveCalendarStyles.dayViewHeader(deviceType)}>
+          <div style={responsiveCalendarStyles.dayViewHeaderContent(deviceType)}>
+            <div style={responsiveCalendarStyles.dayViewHeaderLeft(deviceType)}>
               <button
                 onClick={() => setView('calendar')}
-                style={{
-                  padding: '8px 16px',
-                  backgroundColor: 'transparent',
-                  border: '1px solid #e5e7eb',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  color: '#2563eb',
-                }}
+                style={responsiveCalendarStyles.backButton(deviceType)}
+                onTouchStart={(e) => (e.target.style.backgroundColor = '#f0f8ff')}
+                onTouchEnd={(e) => (e.target.style.backgroundColor = 'transparent')}
                 onMouseOver={(e) => (e.target.style.backgroundColor = '#f0f8ff')}
                 onMouseOut={(e) => (e.target.style.backgroundColor = 'transparent')}
               >
@@ -1730,121 +1880,97 @@ const BookingCalendar = () => {
               </button>
             </div>
 
-            <h1
-              style={{
-                fontSize: '20px',
-                fontWeight: '600',
-                margin: 0,
-                textAlign: 'center',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              Bookings for{' '}
-              {new Date(selectedDate).toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-              })}
+            <h1 style={responsiveCalendarStyles.dayViewTitle(deviceType)}>
+              {deviceType === 'mobile'
+                ? new Date(selectedDate).toLocaleDateString('en-US', {
+                    weekday: 'short',
+                    month: 'short',
+                    day: 'numeric',
+                  })
+                : `Bookings for ${new Date(selectedDate).toLocaleDateString('en-US', {
+                    weekday: 'long',
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric',
+                  })}`}
             </h1>
 
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '16px',
-                justifyContent: 'flex-end',
-              }}
-            >
-              <button
-                onClick={() => setShowLeaveModal(true)}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#dc2626',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  cursor: 'pointer',
-                }}
-                onMouseOver={(e) => (e.target.style.backgroundColor = '#b91c1c')}
-                onMouseOut={(e) => (e.target.style.backgroundColor = '#dc2626')}
-              >
-                + Add Leave
-              </button>
-              <button
-                onClick={() => setShowShiftModal(true)}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#059669',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  cursor: 'pointer',
-                }}
-                onMouseOver={(e) => (e.target.style.backgroundColor = '#047857')}
-                onMouseOut={(e) => (e.target.style.backgroundColor = '#059669')}
-              >
-                + Add Staff Shift
-              </button>
+            <div style={responsiveCalendarStyles.dayViewHeaderRight(deviceType)}>
+              {deviceType !== 'mobile' && (
+                <>
+                  <button
+                    onClick={() => setShowLeaveModal(true)}
+                    style={responsiveCalendarStyles.actionButton(deviceType, 'danger')}
+                    onTouchStart={(e) => (e.target.style.backgroundColor = '#b91c1c')}
+                    onTouchEnd={(e) => (e.target.style.backgroundColor = '#dc2626')}
+                  >
+                    + Add Leave
+                  </button>
+                  <button
+                    onClick={() => setShowShiftModal(true)}
+                    style={responsiveCalendarStyles.actionButton(deviceType, 'success')}
+                    onTouchStart={(e) => (e.target.style.backgroundColor = '#047857')}
+                    onTouchEnd={(e) => (e.target.style.backgroundColor = '#059669')}
+                  >
+                    + Add Shift
+                  </button>
+                </>
+              )}
               <button
                 onClick={() => setShowCreateModal(true)}
-                style={{
-                  padding: '10px 20px',
-                  backgroundColor: '#2563eb',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  fontSize: '14px',
-                  fontWeight: '500',
-                  cursor: 'pointer',
-                }}
-                onMouseOver={(e) => (e.target.style.backgroundColor = '#1d4ed8')}
-                onMouseOut={(e) => (e.target.style.backgroundColor = '#2563eb')}
+                style={responsiveCalendarStyles.actionButton(deviceType, 'primary')}
+                onTouchStart={(e) => (e.target.style.backgroundColor = '#1d4ed8')}
+                onTouchEnd={(e) => (e.target.style.backgroundColor = '#2563eb')}
               >
-                + Create Booking
+                {deviceType === 'mobile' ? '+ Book' : '+ Create Booking'}
               </button>
-              <div style={{ fontSize: '14px', color: '#666' }}>
-                Total bookings: {dayBookings.length}
-              </div>
+              {deviceType !== 'mobile' && (
+                <div style={responsiveCalendarStyles.dayViewStats(deviceType)}>
+                  Total bookings: {dayBookings.length}
+                </div>
+              )}
             </div>
           </div>
         </div>
 
+        {/* Mobile Action Bar */}
+        {deviceType === 'mobile' && (
+          <div style={responsiveCalendarStyles.mobileActionBar}>
+            <button
+              onClick={() => setShowLeaveModal(true)}
+              style={responsiveCalendarStyles.mobileActionButton('danger')}
+              onTouchStart={(e) => (e.target.style.backgroundColor = '#b91c1c')}
+              onTouchEnd={(e) => (e.target.style.backgroundColor = '#dc2626')}
+            >
+              Leave
+            </button>
+            <button
+              onClick={() => setShowShiftModal(true)}
+              style={responsiveCalendarStyles.mobileActionButton('success')}
+              onTouchStart={(e) => (e.target.style.backgroundColor = '#047857')}
+              onTouchEnd={(e) => (e.target.style.backgroundColor = '#059669')}
+            >
+              Shift
+            </button>
+            <div style={responsiveCalendarStyles.mobileStats}>📊 {dayBookings.length} bookings</div>
+          </div>
+        )}
+
         {/* Working Staff Banner */}
         {workingStaff.length > 0 && (
-          <div
-            style={{
-              padding: '12px 24px',
-              backgroundColor: '#f0f9ff',
-              borderBottom: '1px solid #bfdbfe',
-              fontSize: '14px',
-              color: '#1e40af',
-              textAlign: 'center',
-            }}
-          >
+          <div style={responsiveCalendarStyles.statusBanner(deviceType, 'info')}>
             <span style={{ fontWeight: '600' }}>👥 Working Staff ({workingStaff.length})</span>
-            <span style={{ fontSize: '12px', marginLeft: '16px', opacity: 0.8 }}>
-              📅 = Specific shift (click 🗑️ to delete) | 🔄 = Recurring weekly shift
-            </span>
+            {deviceType !== 'mobile' && (
+              <span style={responsiveCalendarStyles.statusBannerSubtext}>
+                📅 = Specific shift (tap 🗑️ to delete) | 🔄 = Recurring weekly shift
+              </span>
+            )}
           </div>
         )}
 
         {/* Staff on Leave Banner */}
         {staffAbsences.length > 0 && (
-          <div
-            style={{
-              padding: '12px 24px',
-              backgroundColor: '#fef2f2',
-              borderBottom: '1px solid #fecaca',
-              fontSize: '14px',
-              color: '#991b1b',
-              textAlign: 'center',
-            }}
-          >
+          <div style={responsiveCalendarStyles.statusBanner(deviceType, 'warning')}>
             <span style={{ fontWeight: '600' }}>🏠 Staff on Leave ({staffAbsences.length}): </span>
             {staffAbsences.map((absence, index) => (
               <span key={absence.id}>
@@ -1857,157 +1983,37 @@ const BookingCalendar = () => {
 
         {/* No Staff Message */}
         {workingStaff.length === 0 && staffAbsences.length === 0 && (
-          <div
-            style={{
-              padding: '16px 24px',
-              backgroundColor: '#fef2f2',
-              borderBottom: '1px solid #fecaca',
-              fontSize: '14px',
-              color: '#991b1b',
-              textAlign: 'center',
-            }}
-          >
+          <div style={responsiveCalendarStyles.statusBanner(deviceType, 'error')}>
             <span style={{ fontWeight: '600' }}>⚠️ No staff scheduled for this date</span>
-            <span style={{ marginLeft: '16px', opacity: 0.8 }}>
-              Click "Add Staff Shift" to schedule staff for this day
-            </span>
-          </div>
-        )}
-
-        {/* Only Staff on Leave Message */}
-        {workingStaff.length === 0 && staffAbsences.length > 0 && (
-          <div
-            style={{
-              padding: '16px 24px',
-              backgroundColor: '#fef2f2',
-              borderBottom: '1px solid #fecaca',
-              fontSize: '14px',
-              color: '#991b1b',
-              textAlign: 'center',
-            }}
-          >
-            <span style={{ fontWeight: '600' }}>
-              ⚠️ No staff available - all scheduled staff are on leave
-            </span>
-            <span style={{ marginLeft: '16px', opacity: 0.8 }}>
-              Add more staff shifts or check staff availability
-            </span>
-          </div>
-        )}
-
-        {/* Drag Instruction Banner */}
-        {isDragging && (
-          <div
-            style={{
-              padding: '8px 16px',
-              backgroundColor: '#dbeafe',
-              color: '#1e40af',
-              textAlign: 'center',
-              fontSize: '13px',
-              fontWeight: '500',
-              borderBottom: '1px solid #93c5fd',
-            }}
-          >
-            🖱️ Drag to a different time slot or staff member to reschedule the booking
+            {deviceType !== 'mobile' && (
+              <span style={responsiveCalendarStyles.statusBannerSubtext}>
+                Click "Add Staff Shift" to schedule staff for this day
+              </span>
+            )}
           </div>
         )}
 
         {/* Scrollable Content Area */}
-        <div
-          style={{
-            flex: 1,
-            overflowY: 'scroll',
-            overflowX: 'auto',
-            position: 'relative',
-            backgroundColor: '#f9fafb',
-            WebkitOverflowScrolling: 'touch',
-            display: 'flex',
-            justifyContent: 'center',
-          }}
-        >
-          <div
-            style={{
-              padding: '24px',
-              width: 'fit-content',
-              maxWidth: '1600px',
-              minHeight: '100%',
-              position: 'relative',
-            }}
-          >
+        <div style={responsiveCalendarStyles.scrollableContent(deviceType)}>
+          <div style={responsiveCalendarStyles.scheduleContainer(deviceType)}>
             {/* Current Time Line */}
             {showCurrentTimeLine && (
-              <div
-                style={{
-                  position: 'absolute',
-                  top: `${currentTimePosition + 125}px`,
-                  left: 0,
-                  right: 0,
-                  height: '2px',
-                  backgroundColor: '#ef4444',
-                  zIndex: 40,
-                  pointerEvents: 'none',
-                  boxShadow: '0 0 4px rgba(239, 68, 68, 0.5)',
-                }}
-              >
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: '8px',
-                    top: '-10px',
-                    backgroundColor: '#ef4444',
-                    color: 'white',
-                    padding: '2px 8px',
-                    borderRadius: '4px',
-                    fontSize: '11px',
-                    fontWeight: '600',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
+              <div style={responsiveCalendarStyles.currentTimeLine(currentTimePosition)}>
+                <div style={responsiveCalendarStyles.currentTimeLabel}>
                   {currentTime.toLocaleTimeString('en-US', {
                     hour: '2-digit',
                     minute: '2-digit',
                     hour12: false,
                   })}
                 </div>
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: 0,
-                    top: '-4px',
-                    width: '10px',
-                    height: '10px',
-                    backgroundColor: '#ef4444',
-                    borderRadius: '50%',
-                    border: '2px solid white',
-                  }}
-                />
+                <div style={responsiveCalendarStyles.currentTimeDot} />
               </div>
             )}
 
             {/* Time/Staff Header - STICKY */}
-            <div
-              style={{
-                position: 'sticky',
-                top: 0,
-                zIndex: 50,
-                backgroundColor: 'white',
-                borderBottom: '2px solid #e5e7eb',
-                display: 'grid',
-                gridTemplateColumns: `100px ${staffGridColumns}`,
-                width: 'fit-content',
-              }}
-            >
-              <div
-                style={{
-                  padding: '12px 16px',
-                  fontWeight: '600',
-                  fontSize: '14px',
-                  borderRight: '1px solid #e5e7eb',
-                  display: 'flex',
-                  alignItems: 'center',
-                }}
-              >
-                Time / Staff
+            <div style={responsiveCalendarStyles.scheduleHeader(deviceType, workingStaff.length)}>
+              <div style={responsiveCalendarStyles.timeHeaderCell(deviceType)}>
+                {deviceType === 'mobile' ? 'Time' : 'Time / Staff'}
               </div>
               {workingStaff.length > 0 ? (
                 workingStaff.map((staffMember) => {
@@ -2020,30 +2026,13 @@ const BookingCalendar = () => {
                   return (
                     <div
                       key={staffMember.id}
-                      style={{
-                        padding: '12px 8px',
-                        fontWeight: '600',
-                        fontSize: '13px',
-                        textAlign: 'center',
-                        borderRight: '1px solid #e5e7eb',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: '4px',
-                        backgroundColor: hasSpecificShift ? '#f0fdf4' : 'white',
-                        position: 'relative',
-                      }}
+                      style={responsiveCalendarStyles.staffHeaderCell(deviceType, hasSpecificShift)}
                     >
-                      <span style={{ fontSize: '12px' }}>👤</span>
-                      <span
-                        style={{
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                          flex: 1,
-                        }}
-                      >
-                        {staffName}
+                      <span style={{ fontSize: deviceType === 'mobile' ? '10px' : '12px' }}>
+                        👤
+                      </span>
+                      <span style={responsiveCalendarStyles.staffName(deviceType)}>
+                        {deviceType === 'mobile' ? staffName.split(' ')[0] : staffName}
                       </span>
                       {hasSpecificShift && (
                         <span style={{ fontSize: '10px', color: '#059669' }}>📅</span>
@@ -2057,43 +2046,23 @@ const BookingCalendar = () => {
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
-                            // If multiple specific shifts, show confirmation for all
                             if (specificShifts.length === 1) {
                               handleDeleteShift(specificShifts[0], staffName)
                             } else {
-                              const confirmMessage = `${staffName} has ${specificShifts.length} specific shifts today. Delete all specific shifts for this date?`
+                              const confirmMessage = `${staffName} has ${specificShifts.length} specific shifts today. Delete all?`
                               if (window.confirm(confirmMessage)) {
-                                // Delete all specific shifts for this staff member
                                 specificShifts.forEach((shift) => {
                                   handleDeleteShift(shift, staffName)
                                 })
                               }
                             }
                           }}
-                          style={{
-                            background: 'none',
-                            border: 'none',
-                            color: '#dc2626',
-                            cursor: 'pointer',
-                            fontSize: '12px',
-                            padding: '2px',
-                            borderRadius: '3px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            width: '16px',
-                            height: '16px',
-                            transition: 'all 0.2s',
-                          }}
-                          onMouseOver={(e) => {
-                            e.target.style.backgroundColor = '#fee2e2'
-                          }}
-                          onMouseOut={(e) => {
-                            e.target.style.backgroundColor = 'transparent'
-                          }}
-                          title={`Delete ${staffName}'s specific shift${
+                          style={responsiveCalendarStyles.deleteShiftButton(deviceType)}
+                          onTouchStart={(e) => (e.target.style.backgroundColor = '#fee2e2')}
+                          onTouchEnd={(e) => (e.target.style.backgroundColor = 'transparent')}
+                          title={`Delete ${staffName}'s shift${
                             specificShifts.length > 1 ? 's' : ''
-                          } for this date`}
+                          }`}
                         >
                           🗑️
                         </button>
@@ -2102,19 +2071,7 @@ const BookingCalendar = () => {
                   )
                 })
               ) : (
-                <div
-                  style={{
-                    padding: '12px 8px',
-                    fontWeight: '600',
-                    fontSize: '13px',
-                    textAlign: 'center',
-                    borderRight: '1px solid #e5e7eb',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    color: '#6b7280',
-                  }}
-                >
+                <div style={responsiveCalendarStyles.noStaffHeader(deviceType)}>
                   No staff scheduled
                 </div>
               )}
@@ -2125,27 +2082,15 @@ const BookingCalendar = () => {
               <div
                 key={timeSlot}
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: `100px ${staffGridColumns}`,
-                  borderBottom: '1px solid #e5e7eb',
-                  minHeight: '40px',
-                  width: 'fit-content',
+                  ...responsiveCalendarStyles.timeSlotRow(deviceType, workingStaff.length),
+                  // FORCE consistent height regardless of content
+                  height: `${SLOT_HEIGHT[deviceType]}px`,
+                  minHeight: `${SLOT_HEIGHT[deviceType]}px`,
+                  maxHeight: `${SLOT_HEIGHT[deviceType]}px`,
+                  overflow: 'visible', // Allow booking blocks to extend visually
                 }}
               >
-                <div
-                  style={{
-                    padding: '8px 16px',
-                    fontSize: '13px',
-                    fontWeight: '500',
-                    color: '#666',
-                    borderRight: '1px solid #e5e7eb',
-                    backgroundColor: 'white',
-                    display: 'flex',
-                    alignItems: 'center',
-                  }}
-                >
-                  {timeSlot}
-                </div>
+                <div style={responsiveCalendarStyles.timeCell(deviceType)}>{timeSlot}</div>
                 {workingStaff.length > 0 ? (
                   workingStaff.map((staffMember) => {
                     const bookingInfo = getBookingInfo(
@@ -2158,125 +2103,209 @@ const BookingCalendar = () => {
                     const isDropTarget =
                       dragTarget?.staff?.id === staffMember.id && dragTarget?.time === timeSlot
 
+                    // Get drop zone status for visual feedback
+                    const dropStatus = draggedBooking
+                      ? getDropZoneStatus(staffMember, timeSlot, draggedBooking, dayBookings)
+                      : null
+
+                    // Determine drop zone styling based on drag status
+                    let dropZoneStyle = {}
+                    if (isDragging && dropStatus) {
+                      switch (dropStatus.type) {
+                        case 'valid':
+                          dropZoneStyle = {
+                            backgroundColor: isDropTarget ? '#dcfce7' : '#f0fdf4',
+                            border: isDropTarget ? '2px dashed #16a34a' : '1px dashed #22c55e',
+                            borderRadius: '6px',
+                          }
+                          break
+                        case 'conflict':
+                        case 'invalid':
+                          dropZoneStyle = {
+                            backgroundColor: isDropTarget ? '#fef2f2' : '#fafafa',
+                            border: isDropTarget ? '2px dashed #dc2626' : '1px dashed #f87171',
+                            borderRadius: '6px',
+                            opacity: 0.6,
+                          }
+                          break
+                        case 'same':
+                          dropZoneStyle = {
+                            backgroundColor: '#fef3c7',
+                            border: '1px dashed #f59e0b',
+                            borderRadius: '6px',
+                            opacity: 0.8,
+                          }
+                          break
+                        default:
+                          if (isDragging) {
+                            dropZoneStyle = {
+                              backgroundColor: '#fafafa',
+                              opacity: 0.5,
+                            }
+                          }
+                      }
+                    }
+
                     return (
                       <div
                         key={`${staffMember.id}-${timeSlot}`}
                         style={{
-                          position: 'relative',
-                          borderRight: '1px solid #e5e7eb',
-                          backgroundColor: isDropTarget ? '#dbeafe' : 'white',
-                          minHeight: '40px',
-                          transition: 'background-color 0.2s ease',
+                          ...responsiveCalendarStyles.staffSlot(deviceType, isDropTarget),
+                          height: `${SLOT_HEIGHT[deviceType]}px`,
+                          minHeight: `${SLOT_HEIGHT[deviceType]}px`,
+                          maxHeight: `${SLOT_HEIGHT[deviceType]}px`,
                         }}
                         onDragOver={handleDragOver}
                         onDragEnter={(e) => handleDragEnter(e, staffMember, timeSlot)}
                         onDragLeave={handleDragLeave}
                         onDrop={(e) => handleDrop(e, staffMember, timeSlot)}
                       >
+                        {/* Enhanced drop feedback with status details */}
+                        {isDragging && isDropTarget && dropStatus && (
+                          <div
+                            style={{
+                              position: 'absolute',
+                              top: '50%',
+                              left: '50%',
+                              transform: 'translate(-50%, -50%)',
+                              fontSize: '10px',
+                              fontWeight: '600',
+                              textAlign: 'center',
+                              pointerEvents: 'none',
+                              zIndex: 10,
+                              color:
+                                dropStatus.type === 'valid'
+                                  ? '#16a34a'
+                                  : dropStatus.type === 'same'
+                                  ? '#f59e0b'
+                                  : '#dc2626',
+                              textShadow: '0 1px 2px rgba(0, 0, 0, 0.1)',
+                            }}
+                          >
+                            {dropStatus.type === 'valid' && '✓ '}
+                            {dropStatus.type === 'conflict' && '✗ '}
+                            {dropStatus.type === 'invalid' && '⚠ '}
+                            {dropStatus.message}
+                          </div>
+                        )}
+
                         {bookingInfo ? (
                           <div
-                            draggable="true"
+                            draggable={deviceType !== 'mobile'}
                             onDragStart={(e) =>
+                              deviceType !== 'mobile' &&
                               handleDragStart(e, bookingInfo.booking, staffMember, timeSlot)
                             }
                             onDragEnd={handleDragEnd}
                             style={{
-                              backgroundColor: getBookingColor(
+                              ...responsiveCalendarStyles.bookingBlock(
+                                deviceType,
                                 bookingInfo.booking,
-                                bookingInfo.booking.status
+                                bookingInfo.slotsSpanned
                               ),
-                              color: 'white',
-                              cursor: 'grab',
+                              height: `${bookingInfo.slotsSpanned * SLOT_HEIGHT[deviceType] - 4}px`,
+                              cursor: deviceType === 'mobile' ? 'pointer' : 'grab',
                               transition: 'all 0.2s ease',
-                              position: 'absolute',
-                              top: 0,
-                              left: 0,
-                              right: 0,
-                              height: `calc(${bookingInfo.slotsSpanned * 40}px - 2px)`,
-                              zIndex: 10,
-                              padding: '6px 8px',
-                              borderRadius: '4px',
-                              margin: '2px',
-                              boxShadow:
-                                '0 2px 4px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1)',
+                              position: 'relative',
+                              // Enhanced visual feedback when dragging
+                              ...(draggedBooking?.booking?.id === bookingInfo.booking.id
+                                ? {
+                                    opacity: 0.5,
+                                    transform: 'scale(0.95)',
+                                    boxShadow: '0 8px 25px rgba(0, 0, 0, 0.3)',
+                                    zIndex: 1000,
+                                  }
+                                : {}),
                             }}
-                            onClick={() => handleBookingClick(bookingInfo.booking)}
-                            onMouseOver={(e) => {
+                            onMouseEnter={(e) => {
                               if (!isDragging) {
-                                e.currentTarget.style.transform = 'scale(1.02)'
-                                e.currentTarget.style.boxShadow =
-                                  '0 4px 12px rgba(0, 0, 0, 0.25), 0 2px 4px rgba(0, 0, 0, 0.15)'
+                                e.currentTarget.style.boxShadow = '0 4px 12px rgba(0, 0, 0, 0.15)'
+                                e.currentTarget.style.transform = 'translateY(-1px)'
+                                // Show drag handle on hover
+                                const dragHandle = e.currentTarget.querySelector('.drag-handle')
+                                if (dragHandle) {
+                                  dragHandle.style.opacity = '1'
+                                }
                               }
                             }}
-                            onMouseOut={(e) => {
-                              e.currentTarget.style.transform = 'scale(1)'
-                              e.currentTarget.style.boxShadow =
-                                '0 2px 4px rgba(0, 0, 0, 0.15), 0 1px 2px rgba(0, 0, 0, 0.1)'
+                            onMouseLeave={(e) => {
+                              if (!isDragging) {
+                                e.currentTarget.style.boxShadow = '0 2px 8px rgba(0, 0, 0, 0.1)'
+                                e.currentTarget.style.transform = 'translateY(0)'
+                                // Hide drag handle
+                                const dragHandle = e.currentTarget.querySelector('.drag-handle')
+                                if (dragHandle) {
+                                  dragHandle.style.opacity = '0.3'
+                                }
+                              }
                             }}
-                            title="Drag to reschedule or click to view details"
+                            onClick={() => handleBookingClick(bookingInfo.booking)}
+                            onTouchStart={(e) => {
+                              if (deviceType === 'mobile') {
+                                e.currentTarget.style.transform = 'scale(0.98)'
+                              }
+                            }}
+                            onTouchEnd={(e) => {
+                              if (deviceType === 'mobile') {
+                                e.currentTarget.style.transform = 'scale(1)'
+                              }
+                            }}
                           >
-                            <div
-                              style={{
-                                fontWeight: '600',
-                                fontSize: '11px',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                                lineHeight: '1.2',
-                              }}
-                            >
+                            {/* Enhanced drag handle */}
+                            {deviceType !== 'mobile' && (
+                              <div
+                                className="drag-handle"
+                                style={{
+                                  position: 'absolute',
+                                  top: '2px',
+                                  right: '2px',
+                                  width: '16px',
+                                  height: '16px',
+                                  opacity: 0.3,
+                                  cursor: 'grab',
+                                  fontSize: '10px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  transition: 'opacity 0.2s ease',
+                                  color: '#6b7280',
+                                  userSelect: 'none',
+                                }}
+                                title="Drag to move booking"
+                              >
+                                ⋮⋮
+                              </div>
+                            )}
+
+                            <div style={responsiveCalendarStyles.bookingService(deviceType)}>
                               {bookingInfo.booking.service}
                             </div>
-                            <div
-                              style={{
-                                fontSize: '10px',
-                                overflow: 'hidden',
-                                textOverflow: 'ellipsis',
-                                whiteSpace: 'nowrap',
-                                lineHeight: '1.2',
-                                opacity: 0.9,
-                                marginTop: '2px',
-                              }}
-                            >
+                            <div style={responsiveCalendarStyles.bookingClient(deviceType)}>
                               {bookingInfo.booking.client}
                             </div>
                             {bookingInfo.booking.notes &&
                               bookingInfo.booking.notes.trim() !== '' && (
-                                <div
-                                  style={{
-                                    fontSize: '10px',
-                                    overflow: 'hidden',
-                                    fontWeight: 'bold',
-                                    textOverflow: 'ellipsis',
-                                    whiteSpace: 'nowrap',
-                                    lineHeight: '1.2',
-                                    color: 'yellow',
-                                  }}
-                                >
+                                <div style={responsiveCalendarStyles.bookingNotes(deviceType)}>
                                   {bookingInfo.booking.notes}
                                 </div>
                               )}
                             {bookingInfo.booking.numClients > 1 && (
-                              <div style={{ fontSize: '9px', opacity: 0.8, marginTop: '2px' }}>
+                              <div style={responsiveCalendarStyles.bookingClientCount(deviceType)}>
                                 ({bookingInfo.booking.numClients} clients)
                               </div>
                             )}
-                            <div style={{ fontSize: '9px', opacity: 0.8, marginTop: '2px' }}>
+                            <div style={responsiveCalendarStyles.bookingTime(deviceType)}>
                               {bookingInfo.booking.time} - {bookingInfo.booking.endTime}
                             </div>
                           </div>
                         ) : (
                           <div
                             style={{
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              height: '40px',
-                              color: '#d1d5db',
-                              fontSize: '12px',
+                              ...responsiveCalendarStyles.emptySlot(deviceType),
+                              height: `${SLOT_HEIGHT[deviceType]}px`,
                             }}
                           >
-                            -
+                            {isDragging && isDropTarget && dropStatus?.type === 'valid' ? '' : '-'}
                           </div>
                         )}
                       </div>
@@ -2284,16 +2313,9 @@ const BookingCalendar = () => {
                   })
                 ) : (
                   <div
-                    key={`empty-${timeSlot}`}
                     style={{
-                      borderRight: '1px solid #e5e7eb',
-                      backgroundColor: 'white',
-                      minHeight: '40px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      color: '#9ca3af',
-                      fontSize: '12px',
+                      ...responsiveCalendarStyles.noStaffSlot(deviceType),
+                      height: `${SLOT_HEIGHT[deviceType]}px`,
                     }}
                   >
                     -
@@ -2303,1385 +2325,122 @@ const BookingCalendar = () => {
             ))}
           </div>
 
-          {/* Day Summary */}
-          <div style={{ padding: '24px', backgroundColor: '#f9fafb' }}>
-            <div
-              style={{
-                backgroundColor: '#dbeafe',
-                padding: '16px',
-                borderRadius: '8px',
-                textAlign: 'center',
-                marginBottom: '16px',
-              }}
-            >
-              <div style={{ fontSize: '14px', color: '#1e40af', marginBottom: '4px' }}>
-                📅 Total Bookings
+          {/* Day Summary for Mobile */}
+          {deviceType === 'mobile' && (
+            <div style={responsiveCalendarStyles.mobileSummary}>
+              <div style={responsiveCalendarStyles.summaryCard('blue')}>
+                <div style={responsiveCalendarStyles.summaryLabel}>📅 Total Bookings</div>
+                <div style={responsiveCalendarStyles.summaryValue}>{dayBookings.length}</div>
               </div>
-              <div style={{ fontSize: '32px', fontWeight: '700', color: '#1e3a8a' }}>
-                {dayBookings.length}
-              </div>
-            </div>
 
-            <div
-              style={{
-                backgroundColor: '#f0fdf4',
-                padding: '16px',
-                borderRadius: '8px',
-                textAlign: 'center',
-              }}
-            >
-              <div style={{ fontSize: '14px', color: '#065f46', marginBottom: '4px' }}>
-                👥 Working Staff
-              </div>
-              <div style={{ fontSize: '32px', fontWeight: '700', color: '#065f46' }}>
-                {workingStaff.length}
+              <div style={responsiveCalendarStyles.summaryCard('green')}>
+                <div style={responsiveCalendarStyles.summaryLabel}>👥 Working Staff</div>
+                <div style={responsiveCalendarStyles.summaryValue}>{workingStaff.length}</div>
               </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Create Booking Modal */}
-        {showCreateModal && workingStaff.length > 0 && (
-          <div style={calendarStyles.modalOverlay} onClick={closeModal}>
-            <div style={calendarStyles.modal} onClick={(e) => e.stopPropagation()}>
-              <div style={calendarStyles.modalHeader}>
-                Create New Booking for{' '}
-                {new Date(selectedDate).toLocaleDateString('en-US', {
-                  weekday: 'long',
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                })}
-              </div>
-
-              <form onSubmit={handleCreateBooking}>
-                {/* Client Selection Section */}
-                <div style={calendarStyles.formGroup}>
-                  <label style={calendarStyles.label}>Client (Optional)</label>
-                  <select
-                    style={{
-                      ...calendarStyles.select,
-                      backgroundColor:
-                        createFormData.name || createFormData.phone ? '#f9fafb' : 'white',
-                    }}
-                    value={createFormData.clientId}
-                    onChange={(e) => handleClientSelection(e.target.value)}
-                    disabled={createFormData.name.trim() || createFormData.phone.trim()}
-                  >
-                    <option value="">Select existing client (optional)</option>
-                    {clients.map((client) => (
-                      <option key={client.id} value={client.id}>
-                        {client.fullName || client.name} - {client.email || client.phone}
-                      </option>
-                    ))}
-                  </select>
-                  {(createFormData.name || createFormData.phone) && (
-                    <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                      Client selection disabled when name/phone is entered
-                    </div>
-                  )}
-                </div>
-
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: '12px',
-                    marginTop: '8px',
-                  }}
-                >
-                  <div style={calendarStyles.formGroup}>
-                    <label style={calendarStyles.label}>Name</label>
-                    <input
-                      type="text"
-                      style={{
-                        ...calendarStyles.input,
-                        backgroundColor: createFormData.clientId ? '#f9fafb' : 'white',
-                      }}
-                      value={createFormData.name}
-                      onChange={(e) => handleNameOrPhoneChange('name', e.target.value)}
-                      disabled={!!createFormData.clientId}
-                      placeholder={
-                        createFormData.clientId
-                          ? 'Auto-filled from selected client'
-                          : 'Enter client name'
-                      }
-                    />
-                  </div>
-
-                  <div style={calendarStyles.formGroup}>
-                    <label style={calendarStyles.label}>Phone</label>
-                    <input
-                      type="tel"
-                      style={{
-                        ...calendarStyles.input,
-                        backgroundColor: createFormData.clientId ? '#f9fafb' : 'white',
-                      }}
-                      value={createFormData.phone}
-                      onChange={(e) => handleNameOrPhoneChange('phone', e.target.value)}
-                      disabled={!!createFormData.clientId}
-                      placeholder={
-                        createFormData.clientId
-                          ? 'Auto-filled from selected client'
-                          : 'Enter phone number'
-                      }
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div style={calendarStyles.formGroup}>
-                  <label style={calendarStyles.label}>Number of Clients *</label>
-                  <select
-                    style={calendarStyles.select}
-                    value={createFormData.numClients}
-                    onChange={(e) =>
-                      setCreateFormData((prev) => ({ ...prev, numClients: e.target.value }))
-                    }
-                    required
-                  >
-                    <option value="1">1 Client</option>
-                    <option value="2">2 Clients</option>
-                    <option value="3">3 Clients</option>
-                    <option value="4">4 Clients</option>
-                    <option value="5">5 Clients</option>
-                  </select>
-                </div>
-
-                <div
-                  style={{
-                    fontSize: '12px',
-                    color: '#666',
-                    fontStyle: 'italic',
-                    marginTop: '8px',
-                    padding: '8px',
-                    backgroundColor: '#f8f9fa',
-                    borderRadius: '4px',
-                  }}
-                >
-                  💡 Either select an existing client OR enter name and phone for a new client
-                </div>
-
-                {/* Services with Search Box */}
-                <div style={calendarStyles.formGroup}>
-                  <label style={calendarStyles.label}>Services (Click to Add Multiple)</label>
-
-                  <input
-                    type="text"
-                    placeholder="🔍 Search services by name or category..."
-                    value={serviceSearchTerm}
-                    onChange={(e) => setServiceSearchTerm(e.target.value)}
-                    style={{
-                      ...calendarStyles.input,
-                      marginBottom: '8px',
-                      padding: '10px 12px',
-                      fontSize: '14px',
-                      border: '2px solid #d1d5db',
-                      backgroundColor: 'white',
-                    }}
-                  />
-
-                  <div
-                    style={{
-                      border: '1px solid #d1d5db',
-                      borderRadius: '6px',
-                      padding: '8px',
-                      maxHeight: '200px',
-                      overflowY: 'auto',
-                      backgroundColor: 'white',
-                    }}
-                  >
-                    {filteredServices.length > 0 ? (
-                      filteredServices.map((service) => (
-                        <div
-                          key={service.id}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            padding: '8px',
-                            cursor: 'pointer',
-                            borderRadius: '4px',
-                            marginBottom: '4px',
-                            backgroundColor: 'transparent',
-                            border: '1px solid #e5e7eb',
-                          }}
-                          onClick={() => handleServiceSelection(service.id.toString())}
-                        >
-                          <button
-                            type="button"
-                            style={{
-                              marginRight: '8px',
-                              padding: '4px 8px',
-                              fontSize: '12px',
-                              backgroundColor: '#2563eb',
-                              color: 'white',
-                              border: 'none',
-                              borderRadius: '4px',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            + Add
-                          </button>
-                          <div style={{ flex: 1 }}>
-                            <div style={{ fontWeight: '500', fontSize: '14px', color: '#000' }}>
-                              {service.name}
-                            </div>
-                            <div style={{ fontSize: '12px', color: '#666' }}>
-                              {service.category && (
-                                <span
-                                  style={{
-                                    backgroundColor: '#e5e7eb',
-                                    padding: '2px 6px',
-                                    borderRadius: '3px',
-                                    marginRight: '6px',
-                                    fontSize: '11px',
-                                  }}
-                                >
-                                  {service.category}
-                                </span>
-                              )}
-                              {service.duration} min - ${service.regularPrice}
-                            </div>
-                          </div>
-                        </div>
-                      ))
-                    ) : (
-                      <div
-                        style={{
-                          padding: '16px',
-                          textAlign: 'center',
-                          color: '#666',
-                          fontSize: '14px',
-                        }}
-                      >
-                        No services found matching '{serviceSearchTerm}'
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Selected Services Display */}
-                  {createFormData.selectedServices.length > 0 && (
-                    <div
-                      style={{
-                        marginTop: '12px',
-                        border: '1px solid #d1d5db',
-                        borderRadius: '6px',
-                        padding: '12px',
-                        backgroundColor: '#f8fafc',
-                      }}
-                    >
-                      <div style={{ fontWeight: '600', marginBottom: '8px', fontSize: '14px' }}>
-                        Selected Services ({createFormData.selectedServices.length}):
-                      </div>
-                      {createFormData.selectedServices.map((serviceInstance, index) => (
-                        <div
-                          key={serviceInstance.instanceId}
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            padding: '6px 0',
-                            borderBottom:
-                              index < createFormData.selectedServices.length - 1
-                                ? '1px solid #e5e7eb'
-                                : 'none',
-                          }}
-                        >
-                          <span style={{ fontSize: '13px' }}>
-                            {serviceInstance.service.name} ({serviceInstance.service.duration} min)
-                          </span>
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveServiceInstance(serviceInstance.instanceId)}
-                            style={{
-                              color: '#dc2626',
-                              backgroundColor: 'transparent',
-                              border: 'none',
-                              cursor: 'pointer',
-                              fontSize: '12px',
-                              padding: '2px 6px',
-                            }}
-                          >
-                            ✕ Remove
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Client-Service Assignment for Multiple Clients */}
-                {createFormData.numClients > 1 && createFormData.selectedServices.length > 0 && (
-                  <div style={calendarStyles.formGroup}>
-                    <label style={calendarStyles.label}>Assign Services to Clients *</label>
-                    <div
-                      style={{
-                        border: '1px solid #d1d5db',
-                        borderRadius: '6px',
-                        padding: '12px',
-                        backgroundColor: 'white',
-                      }}
-                    >
-                      {createFormData.selectedServices.map((serviceInstance, index) => (
-                        <div
-                          key={serviceInstance.instanceId}
-                          style={{
-                            marginBottom:
-                              index < createFormData.selectedServices.length - 1 ? '12px' : '0',
-                            paddingBottom:
-                              index < createFormData.selectedServices.length - 1 ? '12px' : '0',
-                            borderBottom:
-                              index < createFormData.selectedServices.length - 1
-                                ? '1px solid #e5e7eb'
-                                : 'none',
-                          }}
-                        >
-                          <div
-                            style={{
-                              fontSize: '13px',
-                              fontWeight: '600',
-                              marginBottom: '6px',
-                              color: '#374151',
-                            }}
-                          >
-                            {serviceInstance.service.name} ({serviceInstance.service.duration} min)
-                            {/* <span style={{ fontSize: '11px', color: '#666', marginLeft: '8px' }}>
-                              Client #{index + 1}
-                            </span> */}
-                          </div>
-                          <select
-                            style={calendarStyles.select}
-                            value={
-                              createFormData.clientServiceAssignments[
-                                serviceInstance.instanceId
-                              ]?.toString() || ''
-                            }
-                            onChange={(e) =>
-                              handleClientServiceAssignment(
-                                serviceInstance.instanceId,
-                                parseInt(e.target.value)
-                              )
-                            }
-                            required
-                          >
-                            <option value="">Assign to client...</option>
-                            {Array.from({ length: createFormData.numClients }, (_, i) => (
-                              <option key={i} value={i.toString()}>
-                                Client {i + 1}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      ))}
-
-                      {/* Assignment Summary */}
-                      <div style={{ marginTop: '12px', fontSize: '12px', color: '#666' }}>
-                        <strong>Assignment Summary:</strong>
-                        {Array.from({ length: createFormData.numClients }, (_, i) => {
-                          const clientServices = createFormData.selectedServices.filter(
-                            (serviceInstance) =>
-                              createFormData.clientServiceAssignments[
-                                serviceInstance.instanceId
-                              ] === i
-                          )
-
-                          return (
-                            <div key={i} style={{ marginTop: '4px' }}>
-                              Client {i + 1}:{' '}
-                              {clientServices.length > 0
-                                ? clientServices.map((s) => s.service.name).join(', ')
-                                : 'No services assigned'}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* Multiple Bookings Toggle - Show for single client with multiple services */}
-                {createFormData.numClients === 1 &&
-                  createFormData.selectedServices &&
-                  createFormData.selectedServices.length > 1 && (
-                    <div
-                      style={{
-                        ...calendarStyles.formGroup,
-                        backgroundColor: '#f0f9ff',
-                        padding: '12px',
-                        borderRadius: '6px',
-                        border: '1px solid #bfdbfe',
-                      }}
-                    >
-                      <label
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          cursor: 'pointer',
-                          fontSize: '14px',
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={createFormData.createSeparateBookings}
-                          onChange={(e) =>
-                            setCreateFormData((prev) => ({
-                              ...prev,
-                              createSeparateBookings: e.target.checked,
-                            }))
-                          }
-                          style={{ marginRight: '8px', width: '16px', height: '16px' }}
-                        />
-                        <span style={{ fontWeight: '600' }}>
-                          Create separate bookings for each service
-                        </span>
-                      </label>
-                      <div
-                        style={{
-                          fontSize: '12px',
-                          color: '#1e40af',
-                          marginTop: '6px',
-                          marginLeft: '24px',
-                        }}
-                      >
-                        {createFormData.createSeparateBookings
-                          ? '✓ Services will be scheduled consecutively with individual staff assignments'
-                          : 'All services will be combined in one booking'}
-                      </div>
-                    </div>
-                  )}
-
-                {/* Staff Assignment Section - Updated for Multi-Client */}
-                {createFormData.numClients > 1 ? (
-                  // Multiple clients - always show individual service assignments
-                  createFormData.selectedServices &&
-                  createFormData.selectedServices.length > 0 && (
-                    <div style={calendarStyles.formGroup}>
-                      <label style={calendarStyles.label}>Assign Staff to Each Service *</label>
-                      <div
-                        style={{
-                          border: '1px solid #d1d5db',
-                          borderRadius: '6px',
-                          padding: '12px',
-                          backgroundColor: 'white',
-                        }}
-                      >
-                        {createFormData.selectedServices.map((serviceInstance, index) => {
-                          const service = serviceInstance.service
-                          if (!service) return null
-
-                          return (
-                            <div
-                              key={serviceInstance.instanceId}
-                              style={{
-                                marginBottom:
-                                  index < createFormData.selectedServices.length - 1 ? '12px' : '0',
-                                paddingBottom:
-                                  index < createFormData.selectedServices.length - 1 ? '12px' : '0',
-                                borderBottom:
-                                  index < createFormData.selectedServices.length - 1
-                                    ? '1px solid #e5e7eb'
-                                    : 'none',
-                              }}
-                            >
-                              <div
-                                style={{
-                                  fontSize: '13px',
-                                  fontWeight: '600',
-                                  marginBottom: '6px',
-                                  color: '#374151',
-                                }}
-                              >
-                                {service.name} ({service.duration} min)
-                                {/* <span
-                                  style={{ fontSize: '11px', color: '#666', marginLeft: '8px' }}
-                                >
-                                  Client #{index + 1}
-                                </span> */}
-                              </div>
-                              <select
-                                style={calendarStyles.select}
-                                value={
-                                  createFormData.serviceStaffAssignments[
-                                    serviceInstance.instanceId
-                                  ] || ''
-                                }
-                                onChange={(e) =>
-                                  handleServiceStaffAssignment(
-                                    serviceInstance.instanceId,
-                                    e.target.value
-                                  )
-                                }
-                                required
-                              >
-                                <option value="">Select staff member</option>
-                                {workingStaff.map((staffMember) => (
-                                  <option key={staffMember.id} value={staffMember.id}>
-                                    {staffMember.name || staffMember.id}
-                                  </option>
-                                ))}
-                              </select>
-                            </div>
-                          )
-                        })}
-                      </div>
-                      <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
-                        💡 Each service must have a staff member assigned for multiple clients
-                      </div>
-                    </div>
-                  )
-                ) : // Show single staff selection for single client (existing logic)
-                // Single client logic
-                createFormData.createSeparateBookings &&
-                  createFormData.selectedServices &&
-                  createFormData.selectedServices.length > 1 ? (
-                  <div style={calendarStyles.formGroup}>
-                    <label style={calendarStyles.label}>Assign Staff to Each Service *</label>
-                    <div
-                      style={{
-                        border: '1px solid #d1d5db',
-                        borderRadius: '6px',
-                        padding: '12px',
-                        backgroundColor: 'white',
-                      }}
-                    >
-                      {createFormData.selectedServices.map((serviceInstance, index) => {
-                        const service = serviceInstance.service
-                        if (!service) return null
-
-                        return (
-                          <div
-                            key={serviceInstance.instanceId}
-                            style={{
-                              marginBottom:
-                                index < createFormData.selectedServices.length - 1 ? '12px' : '0',
-                              paddingBottom:
-                                index < createFormData.selectedServices.length - 1 ? '12px' : '0',
-                              borderBottom:
-                                index < createFormData.selectedServices.length - 1
-                                  ? '1px solid #e5e7eb'
-                                  : 'none',
-                            }}
-                          >
-                            <div
-                              style={{
-                                fontSize: '13px',
-                                fontWeight: '600',
-                                marginBottom: '6px',
-                                color: '#374151',
-                              }}
-                            >
-                              {service.name} ({service.duration} min)
-                              {/* <span style={{ fontSize: '11px', color: '#666', marginLeft: '8px' }}>
-                                Client #{index + 1}
-                              </span> */}
-                            </div>
-                            <select
-                              style={calendarStyles.select}
-                              value={
-                                createFormData.serviceStaffAssignments[
-                                  serviceInstance.instanceId
-                                ] || ''
-                              }
-                              onChange={(e) =>
-                                handleServiceStaffAssignment(
-                                  serviceInstance.instanceId,
-                                  e.target.value
-                                )
-                              }
-                              required
-                            >
-                              <option value="">Select staff member</option>
-                              {workingStaff.map((staffMember) => (
-                                <option key={staffMember.id} value={staffMember.id}>
-                                  {staffMember.name || staffMember.id}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        )
-                      })}
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#666', marginTop: '8px' }}>
-                      💡 Services will be scheduled back-to-back starting from the selected time
-                    </div>
-                  </div>
-                ) : (
-                  <div style={calendarStyles.formGroup}>
-                    <label style={calendarStyles.label}>Staff Member *</label>
-                    <select
-                      style={calendarStyles.select}
-                      value={createFormData.staffId}
-                      onChange={(e) => {
-                        setCreateFormData((prev) => ({ ...prev, staffId: e.target.value }))
-                      }}
-                      required
-                    >
-                      <option value="">Select staff member</option>
-                      {workingStaff.map((staffMember) => (
-                        <option key={staffMember.id} value={staffMember.id}>
-                          {staffMember.name || staffMember.id}
-                        </option>
-                      ))}
-                    </select>
-                    <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                      Only showing staff available on this day
-                    </div>
-                  </div>
-                )}
-
-                {/* Replace your existing Start Time section with this FIXED version: */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  {/* Start Time Section - CORRECTED */}
-                  {createFormData.numClients > 1 ? (
-                    // Multiple clients - individual start times
-                    <div style={calendarStyles.formGroup}>
-                      <label style={calendarStyles.label}>Start Times for Each Client *</label>
-                      <div
-                        style={{
-                          border: '1px solid #d1d5db',
-                          borderRadius: '6px',
-                          padding: '12px',
-                          backgroundColor: 'white',
-                        }}
-                      >
-                        {Array.from({ length: createFormData.numClients }, (_, clientIndex) => {
-                          const clientServices = getServicesForClient(clientIndex)
-                          const allServicesHaveStaff = clientServices.every(
-                            (serviceInstance) =>
-                              createFormData.serviceStaffAssignments[serviceInstance.instanceId]
-                          )
-
-                          let availableSlots = []
-                          if (allServicesHaveStaff && clientServices.length > 0) {
-                            const currentDayBookings = bookingsByDate[selectedDate] || []
-                            availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
-                              clientServices,
-                              createFormData.serviceStaffAssignments,
-                              currentDayBookings,
-                              services,
-                              selectedDate
-                            )
-                          }
-
-                          return (
-                            <div
-                              key={clientIndex}
-                              style={{
-                                marginBottom:
-                                  clientIndex < createFormData.numClients - 1 ? '16px' : '0',
-                                paddingBottom:
-                                  clientIndex < createFormData.numClients - 1 ? '16px' : '0',
-                                borderBottom:
-                                  clientIndex < createFormData.numClients - 1
-                                    ? '1px solid #e5e7eb'
-                                    : 'none',
-                              }}
-                            >
-                              <div
-                                style={{
-                                  fontSize: '14px',
-                                  fontWeight: '600',
-                                  marginBottom: '8px',
-                                  color: '#374151',
-                                }}
-                              >
-                                Client {clientIndex + 1} Start Time
-                                {clientServices.length > 0 && (
-                                  <span
-                                    style={{
-                                      fontSize: '12px',
-                                      fontWeight: '400',
-                                      color: '#666',
-                                      marginLeft: '8px',
-                                    }}
-                                  >
-                                    ({clientServices.map((s) => s.service.name).join(', ')})
-                                  </span>
-                                )}
-                              </div>
-
-                              <select
-                                style={calendarStyles.select}
-                                value={
-                                  createFormData.clientStartTimes
-                                    ? createFormData.clientStartTimes[clientIndex] || ''
-                                    : ''
-                                }
-                                onChange={(e) =>
-                                  handleClientStartTimeAssignment(clientIndex, e.target.value)
-                                }
-                                required
-                                disabled={!allServicesHaveStaff || clientServices.length === 0}
-                              >
-                                <option value="">Select start time</option>
-                                {availableSlots.map((time) => (
-                                  <option key={time} value={time}>
-                                    {time}
-                                  </option>
-                                ))}
-                              </select>
-
-                              <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                                {clientServices.length === 0 ? (
-                                  <span style={{ color: '#dc2626' }}>
-                                    ⚠️ No services assigned to this client
-                                  </span>
-                                ) : !allServicesHaveStaff ? (
-                                  <span style={{ color: '#dc2626' }}>
-                                    ⚠️ Assign staff to all services first
-                                  </span>
-                                ) : availableSlots.length === 0 ? (
-                                  <span style={{ color: '#dc2626' }}>
-                                    ⚠️ No available time slots
-                                  </span>
-                                ) : (
-                                  <span style={{ color: '#059669' }}>
-                                    ✓ {availableSlots.length} time slot
-                                    {availableSlots.length !== 1 ? 's' : ''} available
-                                  </span>
-                                )}
-                              </div>
-
-                              {createFormData.clientStartTimes &&
-                                createFormData.clientStartTimes[clientIndex] &&
-                                clientServices.length > 0 && (
-                                  <div
-                                    style={{
-                                      fontSize: '11px',
-                                      color: '#666',
-                                      marginTop: '4px',
-                                    }}
-                                  >
-                                    Estimated end time:{' '}
-                                    {(() => {
-                                      const totalDuration = clientServices.reduce(
-                                        (sum, serviceInstance) =>
-                                          sum + serviceInstance.service.duration,
-                                        0
-                                      )
-                                      return calculateEndTime(
-                                        createFormData.clientStartTimes[clientIndex],
-                                        totalDuration
-                                      )
-                                    })()}
-                                  </div>
-                                )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  ) : (
-                    // Single client - one start time
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                      <div style={calendarStyles.formGroup}>
-                        <label style={calendarStyles.label}>
-                          {createFormData.createSeparateBookings &&
-                          createFormData.selectedServices &&
-                          createFormData.selectedServices.length > 1
-                            ? 'Start Time (for first service)'
-                            : 'Start Time'}
-                        </label>
-                        <select
-                          style={calendarStyles.select}
-                          value={createFormData.startTime}
-                          onChange={(e) =>
-                            setCreateFormData((prev) => ({
-                              ...prev,
-                              startTime: e.target.value,
-                            }))
-                          }
-                          required
-                        >
-                          <option value="">Select time</option>
-                          {(() => {
-                            let availableSlots = []
-                            const currentDayBookings = bookingsByDate[selectedDate] || []
-
-                            if (
-                              createFormData.createSeparateBookings &&
-                              createFormData.selectedServices &&
-                              createFormData.selectedServices.length > 1
-                            ) {
-                              availableSlots = getAvailableTimeSlotsForConsecutiveBookings(
-                                createFormData.selectedServices,
-                                createFormData.serviceStaffAssignments,
-                                currentDayBookings,
-                                services,
-                                selectedDate
-                              )
-                            } else {
-                              availableSlots = timeSlots.filter((timeSlot) => {
-                                return isTimeSlotAvailable(
-                                  timeSlot,
-                                  createFormData.staffId,
-                                  currentDayBookings,
-                                  selectedDate,
-                                  selectedServicesInfo.totalDuration
-                                )
-                              })
-                            }
-
-                            return availableSlots.map((time) => (
-                              <option key={time} value={time}>
-                                {time}
-                              </option>
-                            ))
-                          })()}
-                        </select>
-
-                        {(() => {
-                          let availableCount = 0
-                          const currentDayBookings = bookingsByDate[selectedDate] || []
-
-                          if (
-                            createFormData.createSeparateBookings &&
-                            createFormData.selectedServices &&
-                            createFormData.selectedServices.length > 1
-                          ) {
-                            availableCount = getAvailableTimeSlotsForConsecutiveBookings(
-                              createFormData.selectedServices,
-                              createFormData.serviceStaffAssignments,
-                              currentDayBookings,
-                              services,
-                              selectedDate
-                            ).length
-                          } else if (createFormData.staffId) {
-                            availableCount = timeSlots.filter((timeSlot) =>
-                              isTimeSlotAvailable(
-                                timeSlot,
-                                createFormData.staffId,
-                                currentDayBookings,
-                                selectedDate,
-                                selectedServicesInfo.totalDuration
-                              )
-                            ).length
-                          }
-
-                          if (
-                            availableCount === 0 &&
-                            (createFormData.staffId ||
-                              (createFormData.createSeparateBookings &&
-                                Object.keys(createFormData.serviceStaffAssignments).length > 0))
-                          ) {
-                            return (
-                              <div
-                                style={{
-                                  fontSize: '12px',
-                                  color: '#dc2626',
-                                  marginTop: '4px',
-                                  padding: '8px',
-                                  backgroundColor: '#fee2e2',
-                                  borderRadius: '4px',
-                                }}
-                              >
-                                ⚠️ No available time slots for the selected configuration
-                              </div>
-                            )
-                          } else if (availableCount > 0) {
-                            return (
-                              <div style={{ fontSize: '12px', color: '#059669', marginTop: '4px' }}>
-                                ✓ {availableCount} time slot{availableCount !== 1 ? 's' : ''}{' '}
-                                available
-                              </div>
-                            )
-                          }
-
-                          return (
-                            <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                              {createFormData.createSeparateBookings
-                                ? 'Select staff for all services to see available times'
-                                : 'Select a staff member to see available times'}
-                            </div>
-                          )
-                        })()}
-                      </div>
-
-                      <div style={calendarStyles.formGroup}>
-                        <label style={calendarStyles.label}>End Time (Auto-calculated)</label>
-                        <input
-                          type="text"
-                          style={{ ...calendarStyles.input, backgroundColor: '#f9fafb' }}
-                          value={calculateEndTime(
-                            createFormData.startTime,
-                            selectedServicesInfo.totalDuration
-                          )}
-                          disabled
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  <div style={calendarStyles.formGroup}>
-                    <label style={calendarStyles.label}>End Time (Auto-calculated)</label>
-                    <input
-                      type="text"
-                      style={{ ...calendarStyles.input, backgroundColor: '#f9fafb' }}
-                      value={calculateEndTime(
-                        createFormData.startTime,
-                        selectedServicesInfo.totalDuration
-                      )}
-                      disabled
-                    />
-                  </div>
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  <div style={calendarStyles.formGroup}>
-                    <label style={calendarStyles.label}>Total Price (Auto-calculated)</label>
-                    <input
-                      type="text"
-                      style={{ ...calendarStyles.input, backgroundColor: '#f9fafb' }}
-                      value={`$${selectedServicesInfo.totalPrice}`}
-                      disabled
-                    />
-                  </div>
-                </div>
-
-                <div style={calendarStyles.formGroup}>
-                  <label style={calendarStyles.label}>Status</label>
-                  <select
-                    style={calendarStyles.select}
-                    value={createFormData.status}
-                    onChange={(e) =>
-                      setCreateFormData((prev) => ({ ...prev, status: e.target.value }))
-                    }
-                  >
-                    <option value="pending">Pending</option>
-                    <option value="confirmed">Confirmed</option>
-                    <option value="cancelled">Cancelled</option>
-                  </select>
-                </div>
-
-                <div style={calendarStyles.formGroup}>
-                  <label style={calendarStyles.label}>Notes (Optional)</label>
-                  <textarea
-                    style={{ ...calendarStyles.input, minHeight: '80px', resize: 'vertical' }}
-                    value={createFormData.notes}
-                    onChange={(e) =>
-                      setCreateFormData((prev) => ({ ...prev, notes: e.target.value }))
-                    }
-                    placeholder="Add any additional notes..."
-                  />
-                </div>
-
-                <div style={calendarStyles.formButtons}>
-                  <button
-                    type="submit"
-                    disabled={
-                      isCreating ||
-                      !createFormData.selectedServices ||
-                      createFormData.selectedServices.length === 0 ||
-                      !areAllServicesAssignedToStaff() ||
-                      !areAllClientStartTimesAssigned() || // Add this validation
-                      (createFormData.numClients > 1 && !areAllServicesAssigned())
-                    }
-                    style={{
-                      ...calendarStyles.submitButton,
-                      ...(isCreating ||
-                      !createFormData.selectedServices ||
-                      createFormData.selectedServices.length === 0 ||
-                      !areAllServicesAssignedToStaff() ||
-                      !areAllClientStartTimesAssigned() ||
-                      (createFormData.numClients > 1 && !areAllServicesAssigned())
-                        ? calendarStyles.disabledButton
-                        : {}),
-                    }}
-                  >
-                    {isCreating ? 'Creating...' : 'Create Booking'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
+        <CreateBookingModal
+          showModal={showCreateModal && workingStaff.length > 0}
+          deviceType={deviceType}
+          selectedDate={selectedDate}
+          workingStaff={workingStaff}
+          services={services}
+          clients={clients}
+          createFormData={createFormData}
+          isCreating={isCreating}
+          selectedServicesInfo={selectedServicesInfo}
+          bookingsByDate={bookingsByDate}
+          timeSlots={timeSlots}
+          responsiveCalendarStyles={responsiveCalendarStyles}
+          closeModal={closeModal}
+          handleCreateBooking={handleCreateBooking}
+          setCreateFormData={setCreateFormData}
+          handleClientSelection={handleClientSelection}
+          handleNameOrPhoneChange={handleNameOrPhoneChange}
+          handleServiceSelection={handleServiceSelection}
+          handleRemoveServiceInstance={handleRemoveServiceInstance}
+          handleServiceStaffAssignment={handleServiceStaffAssignment}
+          handleClientServiceAssignment={handleClientServiceAssignment}
+          handleClientStartTimeAssignment={handleClientStartTimeAssignment}
+          getServicesForClient={getServicesForClient}
+          areAllServicesAssigned={areAllServicesAssigned}
+          areAllServicesAssignedToStaff={areAllServicesAssignedToStaff}
+          areAllClientStartTimesAssigned={areAllClientStartTimesAssigned}
+          calculateEndTime={calculateEndTime}
+          isTimeSlotAvailable={isTimeSlotAvailable}
+          getAvailableTimeSlotsForConsecutiveBookings={getAvailableTimeSlotsForConsecutiveBookings}
+          serviceSearchTerm={serviceSearchTerm}
+          setServiceSearchTerm={setServiceSearchTerm}
+          filteredServices={filteredServices}
+        />
 
         {/* No Staff Warning Modal */}
-        {showCreateModal && workingStaff.length === 0 && (
-          <div style={calendarStyles.modalOverlay} onClick={closeModal}>
-            <div
-              style={{ ...calendarStyles.modal, maxWidth: '400px' }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div style={{ ...calendarStyles.modalHeader, textAlign: 'center' }}>
-                ⚠️ No Staff Available
-              </div>
-              <div style={{ padding: '20px', textAlign: 'center' }}>
-                <p style={{ color: '#991b1b', marginBottom: '16px' }}>
-                  No staff members are scheduled for this date.
-                </p>
-                <p style={{ color: '#666', fontSize: '14px' }}>
-                  Please add staff shifts first using the &#34;Add Staff Shift&#34; button.
-                </p>
-              </div>
-              <div style={calendarStyles.formButtons}>
-                <button type="button" onClick={closeModal} style={calendarStyles.cancelButton}>
-                  Close
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    closeModal()
-                    setShowShiftModal(true)
-                  }}
-                  style={calendarStyles.submitButton}
-                >
-                  Add Staff Shift
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <NoStaffWarningModal
+          showModal={showCreateModal && workingStaff.length === 0}
+          closeModal={closeModal}
+          openShiftModal={() => setShowShiftModal(true)}
+        />
 
-        {/* Create Staff Shift Modal */}
-        {showShiftModal && (
-          <div style={calendarStyles.modalOverlay} onClick={closeShiftModal}>
-            <div
-              style={{
-                ...calendarStyles.modal,
-                maxWidth: '500px',
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div style={calendarStyles.modalHeader}>
-                Add Staff Shift for{' '}
-                {new Date(selectedDate).toLocaleDateString('en-US', {
-                  weekday: 'long',
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                })}
-              </div>
+        {/* Create Shift Modal */}
+        <CreateShiftModal
+          showModal={showShiftModal}
+          selectedDate={selectedDate}
+          staff={staff}
+          shiftFormData={shiftFormData}
+          isCreatingShift={isCreatingShift}
+          timeSlots={timeSlots}
+          closeModal={closeShiftModal}
+          handleCreateShift={handleCreateShift}
+          setShiftFormData={setShiftFormData}
+        />
 
-              <form onSubmit={handleCreateShift}>
-                {/* Staff Selection */}
-                <div style={calendarStyles.formGroup}>
-                  <label style={calendarStyles.label}>Staff Member *</label>
-                  <select
-                    style={calendarStyles.select}
-                    value={shiftFormData.staffId}
-                    onChange={(e) =>
-                      setShiftFormData((prev) => ({ ...prev, staffId: e.target.value }))
-                    }
-                    required
-                  >
-                    <option value="">Select staff member</option>
-                    {staff.map((staffMember) => (
-                      <option key={staffMember.id} value={staffMember.id}>
-                        {staffMember.name || staffMember.id}
-                      </option>
-                    ))}
-                  </select>
-                  <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                    This will create a specific shift for this date only
-                  </div>
-                </div>
-
-                {/* Duration Display */}
-                {shiftFormData.startTime && shiftFormData.endTime && (
-                  <div
-                    style={{
-                      ...calendarStyles.formGroup,
-                      backgroundColor: '#f0f9ff',
-                      padding: '12px',
-                      borderRadius: '6px',
-                      border: '1px solid #bfdbfe',
-                    }}
-                  >
-                    <div style={{ fontSize: '14px', color: '#1e40af', fontWeight: '600' }}>
-                      Shift Duration:{' '}
-                      {(() => {
-                        const startMinutes = timeToMinutes(shiftFormData.startTime)
-                        const endMinutes = timeToMinutes(shiftFormData.endTime)
-                        let duration = endMinutes - startMinutes
-
-                        if (duration < 0) duration += 24 * 60 // Handle overnight shifts
-
-                        const hours = Math.floor(duration / 60)
-                        const minutes = duration % 60
-
-                        return `${hours}h ${minutes}m`
-                      })()}
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#1e40af', marginTop: '4px' }}>
-                      📅 This is a specific date shift (one-time only)
-                    </div>
-                  </div>
-                )}
-
-                {/* Notes */}
-                <div style={calendarStyles.formGroup}>
-                  <label style={calendarStyles.label}>Notes (Optional)</label>
-                  <textarea
-                    style={{
-                      ...calendarStyles.input,
-                      minHeight: '80px',
-                      resize: 'vertical',
-                      fontFamily: 'inherit',
-                    }}
-                    value={shiftFormData.notes}
-                    onChange={(e) =>
-                      setShiftFormData((prev) => ({ ...prev, notes: e.target.value }))
-                    }
-                    placeholder="Add any notes about this shift..."
-                  />
-                </div>
-
-                {/* Validation Warning */}
-                {shiftFormData.startTime &&
-                  shiftFormData.endTime &&
-                  shiftFormData.startTime >= shiftFormData.endTime && (
-                    <div
-                      style={{
-                        padding: '12px',
-                        backgroundColor: '#fef2f2',
-                        border: '1px solid #fecaca',
-                        borderRadius: '6px',
-                        color: '#991b1b',
-                        fontSize: '14px',
-                        marginBottom: '16px',
-                      }}
-                    >
-                      ⚠️ End time must be after start time
-                    </div>
-                  )}
-
-                {/* Action Buttons */}
-                <div style={calendarStyles.formButtons}>
-                  <button
-                    type="button"
-                    onClick={closeShiftModal}
-                    style={calendarStyles.cancelButton}
-                    disabled={isCreatingShift}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={
-                      isCreatingShift ||
-                      !shiftFormData.staffId ||
-                      !shiftFormData.startTime ||
-                      !shiftFormData.endTime ||
-                      shiftFormData.startTime >= shiftFormData.endTime
-                    }
-                    style={{
-                      ...calendarStyles.submitButton,
-                      backgroundColor: '#059669',
-                      ...(isCreatingShift ||
-                      !shiftFormData.staffId ||
-                      !shiftFormData.startTime ||
-                      !shiftFormData.endTime ||
-                      shiftFormData.startTime >= shiftFormData.endTime
-                        ? { backgroundColor: '#9ca3af', cursor: 'not-allowed' }
-                        : {}),
-                    }}
-                    onMouseOver={(e) => {
-                      if (!e.target.disabled) {
-                        e.target.style.backgroundColor = '#047857'
-                      }
-                    }}
-                    onMouseOut={(e) => {
-                      if (!e.target.disabled) {
-                        e.target.style.backgroundColor = '#059669'
-                      }
-                    }}
-                  >
-                    {isCreatingShift ? 'Creating Shift...' : 'Create Shift'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
-
-        {/* Create Staff Leave Modal */}
-        {showLeaveModal && (
-          <div style={calendarStyles.modalOverlay} onClick={closeLeaveModal}>
-            <div
-              style={{
-                ...calendarStyles.modal,
-                maxWidth: '500px',
-              }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <div style={calendarStyles.modalHeader}>
-                Add Staff Leave for{' '}
-                {new Date(selectedDate).toLocaleDateString('en-US', {
-                  weekday: 'long',
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                })}
-              </div>
-
-              <form onSubmit={handleCreateLeave}>
-                {/* Staff Selection */}
-                <div style={calendarStyles.formGroup}>
-                  <label style={calendarStyles.label}>Staff Member *</label>
-                  <select
-                    style={calendarStyles.select}
-                    value={leaveFormData.staffId}
-                    onChange={(e) =>
-                      setLeaveFormData((prev) => ({ ...prev, staffId: e.target.value }))
-                    }
-                    required
-                  >
-                    <option value="">Select staff member</option>
-                    {staff.map((staffMember) => (
-                      <option key={staffMember.id} value={staffMember.id}>
-                        {staffMember.name || staffMember.id}
-                      </option>
-                    ))}
-                  </select>
-                  <div style={{ fontSize: '12px', color: '#666', marginTop: '4px' }}>
-                    This will record an absence for this specific date
-                  </div>
-                </div>
-
-                {/* Leave Type Selection */}
-                <div style={calendarStyles.formGroup}>
-                  <label style={calendarStyles.label}>Leave Type *</label>
-                  <select
-                    style={calendarStyles.select}
-                    value={leaveFormData.absenceType}
-                    onChange={(e) =>
-                      setLeaveFormData((prev) => ({ ...prev, absenceType: e.target.value }))
-                    }
-                    required
-                  >
-                    {absenceTypes.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Notes */}
-                <div style={calendarStyles.formGroup}>
-                  <label style={calendarStyles.label}>Notes (Optional)</label>
-                  <textarea
-                    style={{
-                      ...calendarStyles.input,
-                      minHeight: '80px',
-                      resize: 'vertical',
-                      fontFamily: 'inherit',
-                    }}
-                    value={leaveFormData.notes}
-                    onChange={(e) =>
-                      setLeaveFormData((prev) => ({ ...prev, notes: e.target.value }))
-                    }
-                    placeholder="Add any notes about this leave..."
-                  />
-                </div>
-
-                {/* Leave Summary */}
-                {leaveFormData.staffId && (
-                  <div
-                    style={{
-                      ...calendarStyles.formGroup,
-                      backgroundColor: '#fef2f2',
-                      padding: '12px',
-                      borderRadius: '6px',
-                      border: '1px solid #fecaca',
-                    }}
-                  >
-                    <div
-                      style={{
-                        fontSize: '14px',
-                        color: '#991b1b',
-                        fontWeight: '600',
-                        marginBottom: '4px',
-                      }}
-                    >
-                      Leave Summary:
-                    </div>
-                    <div style={{ fontSize: '13px', color: '#991b1b' }}>
-                      {staff.find((s) => s.id === parseInt(leaveFormData.staffId))?.name} will be
-                      marked as <strong>{leaveFormData.absenceType}</strong> on{' '}
-                      {new Date(selectedDate).toLocaleDateString('en-US', {
-                        weekday: 'long',
-                        month: 'long',
-                        day: 'numeric',
-                      })}
-                    </div>
-                    <div style={{ fontSize: '12px', color: '#991b1b', marginTop: '4px' }}>
-                      ⚠️ This staff member will not be available for bookings on this date
-                    </div>
-                  </div>
-                )}
-
-                {/* Action Buttons */}
-                <div style={calendarStyles.formButtons}>
-                  <button
-                    type="button"
-                    onClick={closeLeaveModal}
-                    style={calendarStyles.cancelButton}
-                    disabled={isCreatingLeave}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={
-                      isCreatingLeave || !leaveFormData.staffId || !leaveFormData.absenceType
-                    }
-                    style={{
-                      ...calendarStyles.submitButton,
-                      backgroundColor: '#dc2626',
-                      ...(isCreatingLeave || !leaveFormData.staffId || !leaveFormData.absenceType
-                        ? { backgroundColor: '#9ca3af', cursor: 'not-allowed' }
-                        : {}),
-                    }}
-                    onMouseOver={(e) => {
-                      if (!e.target.disabled) {
-                        e.target.style.backgroundColor = '#b91c1c'
-                      }
-                    }}
-                    onMouseOut={(e) => {
-                      if (!e.target.disabled) {
-                        e.target.style.backgroundColor = '#dc2626'
-                      }
-                    }}
-                  >
-                    {isCreatingLeave ? 'Adding Leave...' : 'Add Leave'}
-                  </button>
-                </div>
-              </form>
-            </div>
-          </div>
-        )}
+        {/* Create Leave Modal */}
+        <CreateLeaveModal
+          showModal={showLeaveModal}
+          selectedDate={selectedDate}
+          staff={staff}
+          leaveFormData={leaveFormData}
+          isCreatingLeave={isCreatingLeave}
+          absenceTypes={absenceTypes}
+          closeModal={closeLeaveModal}
+          handleCreateLeave={handleCreateLeave}
+          setLeaveFormData={setLeaveFormData}
+        />
       </div>
     )
   }
 
-  // Calendar View (unchanged from original)
+  // Calendar View (responsive version)
   return (
-    <div style={calendarStyles.container}>
+    <div style={responsiveCalendarStyles.calendarContainer(deviceType)}>
       {/* Calendar Header */}
-      <div style={calendarStyles.header}>
-        <h1 style={calendarStyles.title}>
-          <span style={{ fontSize: '24px' }}>📅</span>
-          Booking Calendar
+      <div style={responsiveCalendarStyles.calendarHeader(deviceType)}>
+        <h1 style={responsiveCalendarStyles.calendarTitle(deviceType)}>
+          <span style={{ fontSize: deviceType === 'mobile' ? '20px' : '24px' }}>📅</span>
+          {deviceType === 'mobile' ? 'Calendar' : 'Booking Calendar'}
         </h1>
-        <div style={calendarStyles.navigation}>
+        <div style={responsiveCalendarStyles.navigation(deviceType)}>
           <button
             onClick={() => navigateMonth(-1)}
-            style={calendarStyles.navButton}
-            onMouseOver={(e) => (e.target.style.backgroundColor = '#f5f5f5')}
-            onMouseOut={(e) => (e.target.style.backgroundColor = 'transparent')}
+            style={responsiveCalendarStyles.navButton(deviceType)}
+            onTouchStart={(e) => (e.target.style.backgroundColor = '#f5f5f5')}
+            onTouchEnd={(e) => (e.target.style.backgroundColor = 'transparent')}
           >
             ←
           </button>
-          <h2 style={calendarStyles.monthTitle}>
-            {currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+          <h2 style={responsiveCalendarStyles.monthTitle(deviceType)}>
+            {deviceType === 'mobile'
+              ? currentDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })
+              : currentDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
           </h2>
           <button
             onClick={() => navigateMonth(1)}
-            style={calendarStyles.navButton}
-            onMouseOver={(e) => (e.target.style.backgroundColor = '#f5f5f5')}
-            onMouseOut={(e) => (e.target.style.backgroundColor = 'transparent')}
+            style={responsiveCalendarStyles.navButton(deviceType)}
+            onTouchStart={(e) => (e.target.style.backgroundColor = '#f5f5f5')}
+            onTouchEnd={(e) => (e.target.style.backgroundColor = 'transparent')}
           >
             →
           </button>
@@ -3689,24 +2448,21 @@ const BookingCalendar = () => {
       </div>
 
       {/* Calendar Grid */}
-      <div style={calendarStyles.calendarGrid}>
+      <div style={responsiveCalendarStyles.calendarGrid(deviceType)}>
         {/* Days of week header */}
-        <div style={calendarStyles.weekHeader}>
-          {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((day) => (
-            <div
-              key={day}
-              style={{
-                ...calendarStyles.weekHeaderCell,
-                borderRight: day === 'Sat' ? 'none' : '1px solid #e5e5e5',
-              }}
-            >
+        <div style={responsiveCalendarStyles.weekHeader(deviceType)}>
+          {(deviceType === 'mobile'
+            ? ['S', 'M', 'T', 'W', 'T', 'F', 'S']
+            : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+          ).map((day, index) => (
+            <div key={day} style={responsiveCalendarStyles.weekHeaderCell(deviceType, index === 6)}>
               {day}
             </div>
           ))}
         </div>
 
         {/* Calendar days */}
-        <div style={calendarStyles.daysGrid}>
+        <div style={responsiveCalendarStyles.daysGrid(deviceType)}>
           {getCalendarDays().map((day, index) => {
             const dateStr = day ? formatDate(day) : null
             const dayBookings = dateStr ? bookingsByDate[dateStr] || [] : []
@@ -3719,43 +2475,30 @@ const BookingCalendar = () => {
             return (
               <div
                 key={index}
-                style={{
-                  ...calendarStyles.dayCell,
-                  ...(day ? {} : calendarStyles.emptyCell),
-                  ...(hoveredDay === index && day ? calendarStyles.dayCellHover : {}),
-                  borderRight: (index + 1) % 7 === 0 ? 'none' : '1px solid #e5e5e5',
-                }}
+                style={responsiveCalendarStyles.dayCell(
+                  deviceType,
+                  day,
+                  hoveredDay === index,
+                  index % 7 === 6
+                )}
                 onClick={() => handleDateClick(day)}
                 onMouseEnter={() => day && setHoveredDay(index)}
                 onMouseLeave={() => setHoveredDay(null)}
+                onTouchStart={() => day && setHoveredDay(index)}
+                onTouchEnd={() => setHoveredDay(null)}
               >
                 {day && (
                   <>
-                    <div
-                      style={{
-                        ...calendarStyles.dayNumber,
-                        ...(isToday ? calendarStyles.todayNumber : {}),
-                      }}
-                    >
+                    <div style={responsiveCalendarStyles.dayNumber(deviceType, isToday)}>
                       {day}
                       {isToday && (
-                        <span
-                          style={{
-                            width: '8px',
-                            height: '8px',
-                            backgroundColor: '#2563eb',
-                            borderRadius: '50%',
-                            display: 'inline-block',
-                            marginLeft: '4px',
-                          }}
-                        ></span>
+                        <span style={responsiveCalendarStyles.todayIndicator(deviceType)} />
                       )}
                     </div>
                     {dayBookings.length > 0 && (
-                      <div>
-                        <div style={calendarStyles.bookingBadge}>
-                          {dayBookings.length} booking{dayBookings.length !== 1 ? 's' : ''}
-                        </div>
+                      <div style={responsiveCalendarStyles.bookingBadge(deviceType)}>
+                        {dayBookings.length} {deviceType === 'mobile' ? '' : 'booking'}
+                        {dayBookings.length !== 1 && deviceType !== 'mobile' ? 's' : ''}
                       </div>
                     )}
                   </>
@@ -3767,10 +2510,10 @@ const BookingCalendar = () => {
       </div>
 
       {/* Monthly Summary */}
-      <div style={calendarStyles.summaryGrid}>
-        <div style={{ ...calendarStyles.summaryCard, ...calendarStyles.summaryCardBlue }}>
-          <div style={calendarStyles.summaryLabel}>Total Bookings</div>
-          <div style={calendarStyles.summaryValue}>{currentMonthBookings.length}</div>
+      <div style={responsiveCalendarStyles.summaryGrid(deviceType)}>
+        <div style={responsiveCalendarStyles.summaryCard('blue')}>
+          <div style={responsiveCalendarStyles.summaryLabel}>Total Bookings</div>
+          <div style={responsiveCalendarStyles.summaryValue}>{currentMonthBookings.length}</div>
         </div>
       </div>
     </div>

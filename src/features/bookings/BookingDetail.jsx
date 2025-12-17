@@ -500,21 +500,123 @@ const EditBookingModal = ({ isOpen, onClose, booking, onBookingUpdated }) => {
             {formData.selectedServiceIds.length > 0 && (
               <div
                 style={{
-                  marginTop: '8px',
-                  padding: '8px',
+                  marginTop: '12px',
+                  padding: '12px',
                   backgroundColor: '#f0f9ff',
-                  borderRadius: '4px',
-                  fontSize: '12px',
+                  borderRadius: '8px',
+                  border: '1px solid #bfdbfe',
                 }}
               >
-                <strong>Selected:</strong> {selectedServicesInfo.serviceNames.join(', ')}
                 <div
                   style={{
-                    marginTop: '4px',
+                    fontWeight: '600',
+                    marginBottom: '8px',
+                    fontSize: '14px',
+                    color: '#1e40af',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
                   }}
                 >
-                  Duration: {selectedServicesInfo.totalDuration} min • Total: $
-                  {selectedServicesInfo.totalPrice}
+                  <span>Selected Services ({formData.selectedServiceIds.length})</span>
+                  {/* ADD THIS: Clear All button */}
+                  <button
+                    type="button"
+                    onClick={() => setFormData((prev) => ({ ...prev, selectedServiceIds: [] }))}
+                    style={{
+                      padding: '4px 8px',
+                      fontSize: '11px',
+                      color: '#dc2626',
+                      backgroundColor: 'transparent',
+                      border: '1px solid #dc2626',
+                      borderRadius: '4px',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Clear All
+                  </button>
+                </div>
+
+                {/* ADD THIS: Individual service items with remove buttons */}
+                <div
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px',
+                    marginBottom: '8px',
+                  }}
+                >
+                  {formData.selectedServiceIds.map((serviceId) => {
+                    const service = services.find((s) => s.id.toString() === serviceId)
+                    if (!service) return null
+
+                    return (
+                      <div
+                        key={serviceId}
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          padding: '6px 8px',
+                          backgroundColor: 'white',
+                          borderRadius: '6px',
+                          border: '1px solid #bfdbfe',
+                        }}
+                      >
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: '13px', fontWeight: '500', color: '#111827' }}>
+                            {service.name}
+                          </div>
+                          <div style={{ fontSize: '11px', color: '#6b7280' }}>
+                            {service.duration} min • $
+                            {(() => {
+                              const regularPriceStr = service.regularPrice
+                                ? String(service.regularPrice)
+                                : '0'
+                              const discountStr = service.discount ? String(service.discount) : '0'
+                              const hasPlus = regularPriceStr.includes('+')
+                              const regularPriceNum = parseFloat(regularPriceStr.replace('+', ''))
+                              const discountNum = parseFloat(discountStr.replace('+', ''))
+                              const finalPrice =
+                                regularPriceNum - (isNaN(discountNum) ? 0 : discountNum)
+                              return hasPlus ? `${finalPrice}+` : `${finalPrice}`
+                            })()}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleServiceToggle(service.id)}
+                          style={{
+                            padding: '4px 8px',
+                            fontSize: '12px',
+                            color: '#dc2626',
+                            backgroundColor: 'transparent',
+                            border: 'none',
+                            cursor: 'pointer',
+                            fontWeight: '600',
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                {/* Existing summary */}
+                <div
+                  style={{
+                    fontSize: '12px',
+                    color: '#1e40af',
+                    paddingTop: '8px',
+                    borderTop: '1px solid #bfdbfe',
+                  }}
+                >
+                  <strong>Total:</strong> {selectedServicesInfo.serviceNames.join(', ')}
+                  <div style={{ marginTop: '4px' }}>
+                    Duration: {selectedServicesInfo.totalDuration} min • Price: $
+                    {selectedServicesInfo.totalPrice}
+                  </div>
                 </div>
               </div>
             )}
@@ -1381,7 +1483,6 @@ const paymentModalStyles = {
   },
   modal: {
     backgroundColor: 'white',
-    borderRadius: '12px',
     width: '90%',
     maxWidth: '500px',
     maxHeight: '90vh',

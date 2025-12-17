@@ -1,21 +1,28 @@
 export const styles = {
   container: {
-    height: '80vh',
-    width: '68vw',
+    height: 'calc(100vh - 80px)',
+    width: 'calc(100vw - 26rem)', // Account for sidebar width
+    maxWidth: 'none',
     backgroundColor: '#F3F4F6',
     display: 'flex',
     fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
     overflow: 'hidden',
-    maxHeight: '85vh',
-    margin: '0 auto',
-    marginTop: '20px',
+    maxHeight: 'calc(100vh - 80px)',
+    // Break out of both Container max-width AND Main padding
+    marginLeft: 'calc(-50vw + 50% + 12rem)', // Adjust for sidebar (26rem / 2)
+    marginRight: 'calc(-50vw + 50% - 12rem)',
+    marginTop: '-4rem',
+    marginBottom: '-6.4rem',
+    padding: '0',
+    position: 'relative',
+    boxSizing: 'border-box',
   },
   leftPanel: {
     flex: '1 1 auto',
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-    maxHeight: '85vh',
+    maxHeight: 'calc(100vh - 60px)',
   },
   searchContainer: {
     backgroundColor: 'white',
@@ -170,7 +177,7 @@ export const styles = {
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-    maxHeight: '85vh',
+    maxHeight: 'calc(100vh - 60px)',
   },
   cartHeader: {
     padding: '12px',
