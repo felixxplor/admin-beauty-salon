@@ -597,7 +597,7 @@ const BookingCalendar = () => {
 
       let serviceDisplay = 'Service'
       if (Array.isArray(booking.services)) {
-        serviceDisplay = booking.services.map((s) => s.name).join(', ')
+        serviceDisplay = booking.services.map((s) => s.name).join(' + ')
       } else if (booking.services?.name) {
         serviceDisplay = booking.services.name
       } else if (booking.serviceIds) {
@@ -605,8 +605,21 @@ const BookingCalendar = () => {
           const serviceIdsArray = Array.isArray(booking.serviceIds)
             ? booking.serviceIds
             : JSON.parse(booking.serviceIds)
-          serviceDisplay =
-            serviceIdsArray.length > 1 ? `${serviceIdsArray.length} Services` : 'Service'
+
+          // Get actual service names with + separator
+          if (serviceIdsArray.length > 0 && services && services.length > 0) {
+            const serviceNames = serviceIdsArray
+              .map((serviceId) => {
+                const service = services.find((s) => s.id === parseInt(serviceId))
+                return service ? service.name : null
+              })
+              .filter((name) => name !== null)
+
+            serviceDisplay = serviceNames.length > 0 ? serviceNames.join(' + ') : 'Service'
+          } else {
+            serviceDisplay =
+              serviceIdsArray.length > 1 ? `${serviceIdsArray.length} Services` : 'Service'
+          }
         } catch (e) {
           serviceDisplay = 'Service'
         }
@@ -1445,6 +1458,8 @@ const BookingCalendar = () => {
     const endMinutes = timeToMinutes(booking.endTime)
     const durationMinutes = endMinutes - startMinutes
     const slotsSpanned = Math.max(1, Math.ceil(durationMinutes / 15))
+
+    console.log('Booking:', booking.service, 'Duration:', durationMinutes, 'Slots:', slotsSpanned) // ADD THIS
 
     return {
       booking,

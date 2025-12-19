@@ -119,17 +119,19 @@ const getBookingColor = (booking, status) => {
   }
 
   if (status === 'completed') {
-    return colors.gray[400]
+    return '#34d399' // Mint green - fresh & clean
   } else if (status === 'cancelled') {
-    return colors.danger[500]
+    return '#f472b6' // Hot pink - bold but not harsh red
   } else if (status === 'pending') {
-    if (serviceCount === 1) return '#f59e0b'
-    if (serviceCount === 2) return '#d97706'
-    return '#b45309'
+    // Peach/Coral gradient for pending
+    if (serviceCount === 1) return '#fb923c' // Peachy orange
+    if (serviceCount === 2) return '#f97316' // Tangerine
+    return '#ea580c' // Deep orange
   } else {
-    if (serviceCount === 1) return colors.primary[500]
-    if (serviceCount === 2) return colors.primary[600]
-    return colors.primary[700]
+    // Confirmed - Purple/Lavender vibes
+    if (serviceCount === 1) return '#a78bfa' // Soft lavender
+    if (serviceCount === 2) return '#8b5cf6' // Medium purple
+    return '#7c3aed' // Deep violet
   }
 }
 
@@ -711,7 +713,7 @@ export const responsiveCalendarStyles = {
     transition: 'background-color 0.2s ease',
     boxSizing: 'border-box',
     minWidth: 0,
-    overflow: 'hidden',
+    overflow: 'visible',
   }),
 
   // IMPROVED: Better booking blocks for mobile
@@ -739,12 +741,12 @@ export const responsiveCalendarStyles = {
 
   bookingService: (deviceType) => ({
     fontWeight: '700',
-    fontSize: deviceType === 'mobile' ? '12px' : '11px',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-    lineHeight: '1.3',
+    fontSize: deviceType === 'mobile' ? '11px' : '10px',
+    whiteSpace: 'normal', // Allow text wrapping
+    lineHeight: '1.2',
     marginBottom: '2px',
+    wordBreak: 'break-word', // Break long words if needed
+    overflowWrap: 'break-word', // Better word wrapping
   }),
 
   bookingClient: (deviceType) => ({
